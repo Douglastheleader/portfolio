@@ -844,43 +844,84 @@ function sentiment(t){
   return 'neu';
 }
 async function fetchRSS(query) {
-  // Return cached result if fresh
   const ckey = query.trim().toLowerCase();
   const cached = rssCache[ckey];
   if (cached && (Date.now()-cached.ts) < RSS_TTL) return cached.data;
 
-  const urls = [
+  // ── Method 1: GNews API (free tier, no proxy needed) ──
+  try {
+    const gurl = 'https://gnews.io/api/v4/search?q='+encodeURIComponent(query)
+      +'&lang=zh&country=hk&max=4&apikey=pub_free';
+    const r = await fetch(gurl);
+    if (r.ok) {
+      const j = await r.json();
+      if (j.articles && j.articles.length) {
+        const data = j.articles.map(a=>({
+          title: a.title||'',
+          time:  timeAgo(a.publishedAt||''),
+          s:     sentiment(a.title||''),
+          link:  a.url||'#',
+        })).filter(x=>x.title.length>5);
+        if (data.length) { rssCache[ckey]={ts:Date.now(),data}; return data; }
+      }
+    }
+  } catch(e){}
+
+  // ── Method 2: NewsData.io (free, no proxy) ──
+  try {
+    const ndurl = 'https://newsdata.io/api/1/news?apikey=pub_free&q='
+      +encodeURIComponent(query)+'&language=zh';
+    const r = await fetch(ndurl);
+    if (r.ok) {
+      const j = await r.json();
+      if (j.results && j.results.length) {
+        const data = j.results.slice(0,4).map(a=>({
+          title: a.title||'',
+          time:  timeAgo(a.pubDate||''),
+          s:     sentiment(a.title||''),
+          link:  a.link||'#',
+        })).filter(x=>x.title.length>5);
+        if (data.length) { rssCache[ckey]={ts:Date.now(),data}; return data; }
+      }
+    }
+  } catch(e){}
+
+  // ── Method 3: allorigins proxy → Google News RSS ──
+  const rssSources = [
     'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
     'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=zh-TW&gl=TW&ceid=TW:zh-Hant',
-    'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
+    'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=en-US&gl=US&ceid=US:en',
   ];
-
-  for (const url of urls) {
-    // Try each proxy in rotation
-    for (let attempt=0; attempt<PROXIES.length; attempt++) {
-      const px = PROXIES[(attempt) % PROXIES.length];
+  const proxyList = [
+    u => 'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+    u => 'https://corsproxy.io/?'+encodeURIComponent(u),
+    u => 'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
+  ];
+  for (const rssUrl of rssSources) {
+    for (const px of proxyList) {
       try {
-        const r = await fetch(px + encodeURIComponent(url), {cache:'no-store'});
+        const r = await fetch(px(rssUrl), {signal: AbortSignal.timeout(5000)});
         if (!r.ok) continue;
         const txt = await r.text();
-        const xml = new DOMParser().parseFromString(txt, 'text/xml');
-        const items = Array.from(xml.querySelectorAll('item')).slice(0, 4);
+        if (!txt.includes('<item>')) continue;
+        const xml = new DOMParser().parseFromString(txt,'text/xml');
+        const items = Array.from(xml.querySelectorAll('item')).slice(0,4);
         if (!items.length) continue;
-        const data = items.map(item => ({
-          title: item.querySelector('title')?.textContent?.replace(/<[^>]+>/g,'').replace(/\s*-\s*[^-]{0,50}$/,'').trim()||'',
+        const data = items.map(item=>({
+          title: (item.querySelector('title')?.textContent||'').replace(/<!\[CDATA\[|\]\]>/g,'').replace(/\s*-\s*[^-]{0,50}$/,'').trim(),
           time:  timeAgo(item.querySelector('pubDate')?.textContent||''),
           s:     sentiment(item.querySelector('title')?.textContent||''),
-          link:  item.querySelector('link')?.textContent||'#',
+          link:  item.querySelector('link')?.textContent||item.querySelector('guid')?.textContent||'#',
         })).filter(x=>x.title.length>8);
-        if (data.length) {
-          rssCache[ckey] = {ts:Date.now(), data};
-          return data;
-        }
-      } catch { continue; }
+        if (data.length) { rssCache[ckey]={ts:Date.now(),data}; return data; }
+      } catch(e){ continue; }
     }
   }
+
+  // ── Method 4: Hardcoded fallback placeholder ──
   return [];
 }
+
 
 async function loadHoldingNews() {
   const c=document.getElementById('news-holdings');
