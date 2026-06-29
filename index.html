@@ -505,13 +505,15 @@ const DEFAULT_WATCH_NOTES = {
   TSM:  '5nm/3nm需求飽和，AI CoWoS供不應求，留意地緣',
 };
 const STRATS = {
-  ORCL:{ rec:'hold', trigger:'$240+',      stop:'$215', note:'雲端業務穩健，AI Oracle DB受惠，等反彈再決定方向。' },
-  RDDT:{ rec:'hold', trigger:'$160-165',   stop:'$150', note:'用戶增長強勁，廣告收入加速，估值偏高宜小注持有。' },
-  VOO: { rec:'buy',  trigger:'$650回調',   stop:'$610', note:'標普500核心底倉，回調即加，長線首選。' },
-  VT:  { rec:'hold', trigger:'$148',        stop:'$138', note:'全球分散配置，降低美股集中風險，保留。' },
-  AAPL:{ rec:'buy',  trigger:'$280-288',   stop:'$270', note:'Apple Intelligence需求強勁，回調屬加碼機會。' },
-  NVDA:{ rec:'watch',trigger:'$195-200',   stop:'$185', note:'AI算力龍頭，估值仍高，分批建倉為宜。' },
-  ADM: { rec:'hold', trigger:'$72-74',     stop:'$68',  note:'農業龍頭，受惠糧食供應鏈，回調至$72可分批加。' },
+  ORCL:{ rec:'hold', note:'雲端業務穩健，AI Oracle DB受惠，等反彈再決定方向。' },
+  RDDT:{ rec:'hold', note:'用戶增長強勁，廣告收入加速，估值偏高宜小注持有。' },
+  VOO: { rec:'buy',  note:'標普500核心底倉，回調即加，長線首選。' },
+  VT:  { rec:'hold', note:'全球分散配置，降低美股集中風險，保留。' },
+  AAPL:{ rec:'buy',  note:'Apple Intelligence需求強勁，回調屬加碼機會。' },
+  NVDA:{ rec:'watch',note:'AI算力龍頭，估值仍高，分批建倉為宜。' },
+  ADM: { rec:'hold', note:'農業龍頭，受惠糧食供應鏈，回調至$72可分批加。' },
+  GEV: { rec:'hold', note:'電網基建龍頭，估值已高，持有等回調再加。' },
+  META:{ rec:'hold', note:'廣告業務強勁，AI整合加速，估值合理持有。' },
 };
 
 // Sector news queries (影響持倉的版塊)
@@ -1126,10 +1128,38 @@ function openDetail(i) {
   }
   document.getElementById('d-grid').innerHTML=rows;
   const rLbl2={buy:'建議加碼',hold:'建議持有',watch:'觀察為主'}[s.rec]||'持有';
+  // ── Dynamic stop-loss & trigger calculation ──
+  let dynStop = s.stop, dynTrigger = s.trigger, stopClass = '', stopNote = '';
+  if (d && d.p) {
+    const price = d.p;
+    const isETF = ['VOO','VT'].includes(h.ticker);
+    const stopPct  = isETF ? 0.90 : 0.93; // ETF 10% / 個股 7%
+    const costFloor = h.cost * (isETF ? 0.92 : 0.92); // 最多虧 8% 成本
+    const priceStop = price * stopPct;
+    const rawStop   = Math.max(priceStop, costFloor);
+    dynStop = '$' + rawStop.toFixed(2);
+
+    // Color coding
+    const distPct = ((price - rawStop) / price) * 100;
+    if (distPct < 3)       { stopClass = 'color:var(--red);font-weight:700';   stopNote = ' ⚠️ 貼近止蝕'; }
+    else if (distPct < 6)  { stopClass = 'color:var(--gold);font-weight:600';  stopNote = ' 留意'; }
+    else                   { stopClass = 'color:var(--green)';                  stopNote = ''; }
+
+    // Dynamic trigger: if in profit → add 1–2% above cost; if loss → wait for cost recovery
+    if (price >= h.cost * 1.05) {
+      dynTrigger = '已盈利，可持有或部分止賺';
+    } else if (price >= h.cost) {
+      dynTrigger = '接近成本，建議持有觀察';
+    } else {
+      const recoverPct = ((h.cost / price - 1) * 100).toFixed(1);
+      dynTrigger = '需回升 '+recoverPct+'% 至 $'+h.cost.toFixed(2)+' 回本';
+    }
+  }
+
   document.getElementById('d-strat').innerHTML=
     '<div class="strat-box"><div class="strat-label">操作建議</div><div class="strat-val">'+rLbl2+'</div></div>'
-    +'<div class="strat-box"><div class="strat-label">加碼觸發位</div><div class="strat-val">'+s.trigger+'</div></div>'
-    +'<div class="strat-box"><div class="strat-label">止蝕參考</div><div class="strat-val">'+s.stop+'</div></div>'
+    +'<div class="strat-box"><div class="strat-label">現價狀態</div><div class="strat-val">'+dynTrigger+'</div></div>'
+    +'<div class="strat-box" style="grid-column:span 2"><div class="strat-label">動態止蝕位 <span style="font-size:10px;opacity:.6">（現價×93% 或 成本×92%，取較高）</span></div><div class="strat-val" style="'+stopClass+'">'+dynStop+stopNote+'</div></div>'
     +'<div id="d-fund"><div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">📡 載入即時基本面中…</div></div>';
   document.getElementById('detail-modal').classList.add('show');
 
