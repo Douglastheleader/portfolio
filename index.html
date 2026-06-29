@@ -259,6 +259,33 @@ input,textarea{-webkit-appearance:none;appearance:none}
 .ts-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
 .ts-val{font-family:var(--mono);font-size:13px;font-weight:700}
 
+
+/* ── CALENDAR ── */
+.cal-section-title{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:10px 4px 6px;display:flex;align-items:center;gap:6px}
+.cal-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:8px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px}
+.cal-date-box{min-width:44px;text-align:center;background:var(--surface2);border-radius:8px;padding:6px 4px;flex-shrink:0}
+.cal-month{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.cal-day{font-size:20px;font-weight:800;font-family:var(--mono);line-height:1}
+.cal-body{flex:1;min-width:0}
+.cal-sym{font-family:var(--mono);font-size:13px;font-weight:700}
+.cal-name{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-meta{display:flex;gap:8px;margin-top:5px;flex-wrap:wrap}
+.cal-badge{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600}
+.cal-badge-bmo{background:#e8f4fd;color:#1a6fa3}
+.cal-badge-amc{background:#fdf3e8;color:#a36a1a}
+.cal-badge-est{background:var(--surface2);color:var(--muted)}
+.cal-eps-row{display:flex;gap:10px;margin-top:5px;font-size:11px}
+.cal-eps-item{display:flex;flex-direction:column;align-items:center;background:var(--surface2);border-radius:6px;padding:4px 8px;min-width:56px}
+.cal-eps-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.cal-eps-val{font-family:var(--mono);font-size:12px;font-weight:700;margin-top:1px}
+.cal-holding-tag{font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--primary-bg,#e8f0fe);color:var(--primary)}
+.cal-today-line{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font-size:10px;color:var(--muted);font-weight:600}
+.cal-today-line::before,.cal-today-line::after{content:'';flex:1;height:1px;background:var(--divider)}
+.cal-empty{padding:20px;text-align:center;color:var(--muted);font-size:12px}
+.cal-filter-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.cal-filter-btn{font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-weight:600;transition:all .15s}
+.cal-filter-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
 </style>
 </head>
 <body>
@@ -305,6 +332,7 @@ input,textarea{-webkit-appearance:none;appearance:none}
   <button class="tab-btn" onclick="switchTab('watch',this)">👀 留意名單</button>
   <button class="tab-btn" onclick="switchTab('charts',this)">📈 圖表</button>
   <button class="tab-btn" onclick="switchTab('trades',this)">🧾 交易記錄</button>
+  <button class="tab-btn" onclick="switchTab('calendar',this)">📅 財報日曆</button>
 </div>
 
 <!-- PAGES -->
@@ -326,6 +354,10 @@ input,textarea{-webkit-appearance:none;appearance:none}
 
 <div class="page" id="pg-charts">
   <div id="charts-container"></div>
+</div>
+
+<div class="page" id="pg-calendar">
+  <div id="cal-container"><div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">📡 載入財報日曆中…</div></div>
 </div>
 
 <div class="page" id="pg-trades">
@@ -538,6 +570,12 @@ function updateClock() {
   el.className='pill '+(open?'pill-open':'pill-closed');
 }
 setInterval(updateClock,1000); updateClock();
+// Auto-refresh prices every 2 minutes
+setInterval(async ()=>{
+  await fetchAll();
+  renderPrices(); renderSummary(); renderTape(); renderWatch();
+  if(document.querySelector('.tab-btn.active')?.textContent.includes('圖表')) renderCharts();
+}, 120000);
 
 // ══════════════════════════════════════════
 //  FETCH STOCK PRICE
@@ -650,7 +688,8 @@ async function fetchFundExtra(t, px) {
 async function fetchAll() {
   const tickers=[...new Set([...HOLDINGS.map(h=>h.ticker),...WATCH.map(w=>w.ticker)])];
   const res = await Promise.all(tickers.map(t=>fetchPrice(t).then(r=>[t,r])));
-  res.forEach(([t,r])=>{ if(r) cache[t]=r; });
+  const now=Date.now();
+  res.forEach(([t,r])=>{ if(r){ r._ts=now; cache[t]=r; } });
 }
 
 // ══════════════════════════════════════════
@@ -1087,6 +1126,18 @@ function switchTab(id,btn){
   if(id==='sector'&&!newsLoaded.sector){ loadSectorNews(); newsLoaded.sector=true; }
   if(id==='charts'){ renderCharts(); }
   if(id==='trades'){ renderTrades(); }
+  if(id==='calendar'){ loadCalendar(); }
+  if(id==='watch'){
+    renderWatch();
+    // Refresh watch prices if cache is older than 60s
+    const now=Date.now();
+    const stale=WATCH.some(w=>!cache[w.ticker]||(now-(cache[w.ticker]._ts||0))>60000);
+    if(stale){
+      Promise.all(WATCH.map(w=>fetchPrice(w.ticker).then(r=>{
+        if(r){r._ts=Date.now();cache[w.ticker]=r;}
+      }))).then(()=>{ renderWatch(); renderTape(); });
+    }
+  }
 }
 
 // ══════════════════════════════════════════
@@ -1158,6 +1209,171 @@ document.getElementById('inst-dismiss').addEventListener('click',()=>{
 });
 
 
+
+
+// ══════════════════════════════════════════
+//  EARNINGS CALENDAR
+// ══════════════════════════════════════════
+let calFilter = 'all'; // all | holdings | watch
+
+async function loadCalendar() {
+  const el = document.getElementById('cal-container');
+  el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">📡 載入財報日曆中…</div>';
+
+  // Get date range: today to +60 days
+  const today = new Date();
+  const from  = today.toISOString().split('T')[0];
+  const to    = new Date(today.getTime()+60*86400000).toISOString().split('T')[0];
+
+  // All tickers to check
+  const holdingTickers = HOLDINGS.map(h=>h.ticker);
+  const watchTickers   = WATCH.map(w=>w.ticker);
+  const allTickers     = [...new Set([...holdingTickers,...watchTickers])];
+
+  // Fetch earnings calendar from Finnhub for each ticker
+  const BASE = 'https://finnhub.io/api/v1';
+  const KEY  = 'd911e61r01qsei6m7i50d911e61r01qsei6m7i5g';
+
+  let events = [];
+  try {
+    // Try bulk endpoint first
+    const r = await fetch(BASE+'/calendar/earnings?from='+from+'&to='+to+'&token='+KEY);
+    if (r.ok) {
+      const j = await r.json();
+      const all = j.earningsCalendar || [];
+      // Filter to our tickers only
+      const mySet = new Set(allTickers);
+      events = all.filter(e => mySet.has(e.symbol));
+    }
+  } catch(e) {}
+
+  // If bulk returned nothing, fetch per-ticker
+  if (!events.length) {
+    const results = await Promise.all(allTickers.map(async t => {
+      try {
+        const r = await fetch(BASE+'/stock/earnings?symbol='+t+'&token='+KEY);
+        if (!r.ok) return [];
+        const j = await r.json();
+        // Find next upcoming earnings
+        if (Array.isArray(j) && j.length) {
+          const upcoming = j.filter(e => e.date >= from).slice(0, 2);
+          return upcoming.map(e => ({
+            symbol: t,
+            date: e.date,
+            epsEstimate: e.estimatedEps,
+            epsActual: e.actual,
+            revenueEstimate: e.revenueEstimate,
+            hour: e.hour || 'unknown',
+          }));
+        }
+        return [];
+      } catch { return []; }
+    }));
+    events = results.flat();
+  }
+
+  // Sort by date
+  events.sort((a,b) => a.date.localeCompare(b.date));
+
+  renderCalendar(events, holdingTickers, watchTickers, today);
+}
+
+function renderCalendar(events, holdingTickers, watchTickers, today) {
+  const el = document.getElementById('cal-container');
+  const todayStr = today.toISOString().split('T')[0];
+
+  // Filter
+  let filtered = events;
+  if (calFilter === 'holdings') filtered = events.filter(e => holdingTickers.includes(e.symbol));
+  if (calFilter === 'watch')    filtered = events.filter(e => watchTickers.includes(e.symbol));
+
+  // Filter row
+  let html = '<div class="cal-filter-row">'
+    + ['all','holdings','watch'].map(f =>
+        '<button class="cal-filter-btn'+(calFilter===f?' active':'')+'" onclick="calFilter=\''+f+'\';loadCalendar()">'
+        + {all:'📋 全部',holdings:'💼 持倉',watch:'👀 留意名單'}[f]
+        + '</button>'
+      ).join('')
+    + '</div>';
+
+  if (!filtered.length) {
+    el.innerHTML = html + '<div class="cal-empty">📭 未來60日內未找到財報數據<br><span style="font-size:11px">Finnhub 免費版可能不包含部份股票</span></div>';
+    return;
+  }
+
+  // Group by week
+  let lastWeekLabel = '';
+  let pastShown = false;
+
+  filtered.forEach(e => {
+    const d      = new Date(e.date + 'T00:00:00');
+    const isPast = e.date < todayStr;
+    const isToday = e.date === todayStr;
+
+    // Today divider
+    if (!isPast && !pastShown) {
+      if (lastWeekLabel) html += '</div>';
+      html += '<div class="cal-today-line">今日 ' + todayStr + '</div>';
+      pastShown = true;
+      lastWeekLabel = '';
+    }
+
+    // Week label
+    const weekLabel = getWeekLabel(d);
+    if (weekLabel !== lastWeekLabel) {
+      if (lastWeekLabel) html += '';
+      html += '<div class="cal-section-title">📅 ' + weekLabel + '</div>';
+      lastWeekLabel = weekLabel;
+    }
+
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const isHolding = holdingTickers.includes(e.symbol);
+    const isWatch   = watchTickers.includes(e.symbol);
+    const hourLbl   = e.hour==='bmo'?'開市前':'amc'===e.hour?'收市後':'時間待定';
+    const hourCls   = e.hour==='bmo'?'cal-badge-bmo':'amc'===e.hour?'cal-badge-amc':'cal-badge-est';
+    const curPrice  = cache[e.symbol]?.p;
+    const holdingH  = HOLDINGS.find(h=>h.symbol===e.symbol||h.ticker===e.symbol);
+
+    html += '<div class="cal-card" style="opacity:'+(isPast?'0.55':'1')+'">'
+      + '<div class="cal-date-box">'
+      + '<div class="cal-month">'+months[d.getMonth()]+'</div>'
+      + '<div class="cal-day">'+d.getDate()+'</div>'
+      + '</div>'
+      + '<div class="cal-body">'
+      + '<div style="display:flex;align-items:center;gap:6px">'
+      + '<span class="cal-sym">'+e.symbol+'</span>'
+      + (isHolding?'<span class="cal-holding-tag">持倉</span>':'')
+      + (isWatch&&!isHolding?'<span class="cal-holding-tag" style="background:var(--surface2);color:var(--muted)">留意</span>':'')
+      + (curPrice?'<span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto">$'+curPrice.toFixed(2)+'</span>':'')
+      + '</div>'
+      + '<div class="cal-meta">'
+      + '<span class="cal-badge '+hourCls+'">'+hourLbl+'</span>'
+      + (isToday?'<span class="cal-badge" style="background:var(--primary);color:#fff">今日</span>':'')
+      + '</div>'
+      + (e.epsEstimate||e.epsActual?
+          '<div class="cal-eps-row">'
+          + (e.epsEstimate!=null?'<div class="cal-eps-item"><div class="cal-eps-lbl">EPS預測</div><div class="cal-eps-val">$'+Number(e.epsEstimate).toFixed(2)+'</div></div>':'')
+          + (e.epsActual!=null?'<div class="cal-eps-item"><div class="cal-eps-lbl">EPS實際</div><div class="cal-eps-val" style="color:'+(e.epsActual>=e.epsEstimate?'var(--green)':'var(--red)')+'">$'+Number(e.epsActual).toFixed(2)+'</div></div>':'')
+          + (e.revenueEstimate!=null?'<div class="cal-eps-item"><div class="cal-eps-lbl">收入預測</div><div class="cal-eps-val">$'+(e.revenueEstimate/1e9).toFixed(1)+'B</div></div>':'')
+          + '</div>'
+        : '')
+      + '</div>'
+      + '</div>';
+  });
+
+  el.innerHTML = html;
+}
+
+function getWeekLabel(d) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const diff  = Math.floor((d-today)/86400000);
+  if (diff < 0)  return '本週稍早';
+  if (diff < 7)  return '本週';
+  if (diff < 14) return '下週';
+  if (diff < 21) return '兩週後';
+  const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  return months[d.getMonth()] + ' ' + d.getFullYear();
+}
 
 // ══════════════════════════════════════════
 //  TRADE LOG
