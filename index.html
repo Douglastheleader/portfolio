@@ -420,7 +420,7 @@ function sentimentGuess(title) {
 
 async function fetchRSSNews(ticker) {
   const PROXY = 'https://corsproxy.io/?';
-  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${ticker}&region=US&lang=en-US`;
+  const url = `https://news.google.com/rss/search?q=${ticker}+stock&hl=en-US&gl=US&ceid=US:en`;
   try {
     const res = await fetch(PROXY + encodeURIComponent(url));
     const txt = await res.text();
@@ -429,7 +429,7 @@ async function fetchRSSNews(ticker) {
     const items = Array.from(xml.querySelectorAll('item')).slice(0, 2);
     return items.map(item => ({
       ticker,
-      title: item.querySelector('title')?.textContent || '',
+      title: item.querySelector('title')?.textContent?.replace(/\s*-\s*[^-]*$/, '') || '',
       time: timeAgo(item.querySelector('pubDate')?.textContent || ''),
       s: sentimentGuess(item.querySelector('title')?.textContent || '')
     }));
