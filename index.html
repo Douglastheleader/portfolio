@@ -763,12 +763,44 @@ function renderWatch() {
 // ══════════════════════════════════════════
 // ── Live fundamentals fetch ──
 async function fetchFundamentals(ticker) {
-  try {
-    const url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+ticker+'&fields=trailingPE,forwardPE,priceToBook,marketCap,targetMeanPrice,recommendationKey,numberOfAnalystOpinions,dividendYield,trailingAnnualDividendYield,epsTrailingTwelveMonths,epsForward,revenueGrowth,earningsGrowth,regularMarketPrice';
-    const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
-    const j = await r.json();
-    return j.quoteResponse?.result?.[0] || null;
-  } catch { return null; }
+  // Try v7 quote first, then v8 chart summary, then v10 quoteSummary
+  const endpoints = [
+    'https://query2.finance.yahoo.com/v7/finance/quote?symbols='+ticker+'&fields=trailingPE,forwardPE,priceToBook,marketCap,targetMeanPrice,recommendationKey,numberOfAnalystOpinions,dividendYield,trailingAnnualDividendYield,epsTrailingTwelveMonths,epsForward,revenueGrowth,regularMarketPrice',
+    'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+ticker+'&fields=trailingPE,forwardPE,priceToBook,marketCap,targetMeanPrice,recommendationKey,numberOfAnalystOpinions,dividendYield,trailingAnnualDividendYield,epsTrailingTwelveMonths,epsForward,revenueGrowth,regularMarketPrice',
+    'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'+ticker+'?modules=summaryDetail,defaultKeyStatistics,financialData,recommendationTrend,earningsTrend',
+  ];
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
+      if (!r.ok) continue;
+      const j = await r.json();
+      // v7 format
+      if (j.quoteResponse?.result?.[0]) return j.quoteResponse.result[0];
+      // v10 quoteSummary format - remap to same shape
+      if (j.quoteSummary?.result?.[0]) {
+        const q = j.quoteSummary.result[0];
+        const sd = q.summaryDetail || {};
+        const ks = q.defaultKeyStatistics || {};
+        const fd = q.financialData || {};
+        return {
+          trailingPE:           sd.trailingPE?.raw,
+          forwardPE:            sd.forwardPE?.raw,
+          priceToBook:          ks.priceToBook?.raw,
+          marketCap:            sd.marketCap?.raw,
+          targetMeanPrice:      fd.targetMeanPrice?.raw,
+          recommendationKey:    fd.recommendationKey,
+          numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw,
+          dividendYield:        sd.dividendYield?.raw,
+          trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw,
+          epsTrailingTwelveMonths: ks.trailingEps?.raw,
+          epsForward:           ks.forwardEps?.raw,
+          revenueGrowth:        fd.revenueGrowth?.raw,
+          regularMarketPrice:   fd.currentPrice?.raw,
+        };
+      }
+    } catch { continue; }
+  }
+  return null;
 }
 function fmtMC(v){if(!v)return'—';if(v>=1e12)return'$'+(v/1e12).toFixed(2)+'T';if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B';return'$'+(v/1e6).toFixed(0)+'M';}
 function fmtP(v,d=2){return v!=null?'$'+v.toFixed(d):'—';}
