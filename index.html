@@ -543,19 +543,77 @@ setInterval(updateClock,1000); updateClock();
 //  FETCH STOCK PRICE
 // ══════════════════════════════════════════
 const PROXY = 'https://corsproxy.io/?';
+let fundCache = {};
+
 async function fetchPrice(t) {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`;
-    const r = await fetch(PROXY + encodeURIComponent(url));
-    const j = await r.json();
-    const m = j.chart.result[0].meta;
-    const closes = j.chart.result[0].indicators?.quote?.[0]?.close?.filter(x=>x!=null) || [];
-    const p    = m.regularMarketPrice || m.previousClose;
-    const prev = m.previousClose || p;
-    const hi52 = closes.length ? Math.max(...closes) : null;
-    const lo52 = closes.length ? Math.min(...closes) : null;
-    return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52 };
-  } catch { return null; }
+  // Try multiple proxies for resilience
+  const proxies = [
+    'https://corsproxy.io/?',
+    'https://api.allorigins.win/raw?url=',
+  ];
+  for (const px of proxies) {
+    try {
+      const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=1y';
+      const r = await fetch(px + encodeURIComponent(url), {cache:'no-store'});
+      if (!r.ok) continue;
+      const j = await r.json();
+      const m = j.chart.result[0].meta;
+      const closes = j.chart.result[0].indicators?.quote?.[0]?.close?.filter(x=>x!=null) || [];
+      const p    = m.regularMarketPrice || m.previousClose;
+      const prev = m.previousClose || p;
+      const hi52 = closes.length ? Math.max(...closes) : null;
+      const lo52 = closes.length ? Math.min(...closes) : null;
+      // Extract any fundamentals available in chart meta
+      fundCache[t] = {
+        marketCap:      m.marketCap || null,
+        trailingPE:     m.trailingPE || null,
+        epsTrailingTwelveMonths: m.epsTrailingTwelveMonths || null,
+        dividendRate:   m.dividendRate || null,
+        dividendYield:  m.trailingAnnualDividendYield || null,
+        fiftyTwoWeekHigh: hi52,
+        fiftyTwoWeekLow:  lo52,
+      };
+      return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52, px };
+    } catch { continue; }
+  }
+  return null;
+}
+
+async function fetchFundExtra(t, px) {
+  // Use the same working proxy to fetch quote summary v10
+  const usePx = px || PROXY;
+  const endpoints = [
+    'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
+    'https://query1.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
+  ];
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(usePx + encodeURIComponent(url), {cache:'no-store'});
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (!j.quoteSummary?.result?.[0]) continue;
+      const q  = j.quoteSummary.result[0];
+      const sd = q.summaryDetail || {};
+      const ks = q.defaultKeyStatistics || {};
+      const fd = q.financialData || {};
+      return {
+        marketCap:       sd.marketCap?.raw,
+        trailingPE:      sd.trailingPE?.raw,
+        forwardPE:       sd.forwardPE?.raw,
+        priceToBook:     ks.priceToBook?.raw,
+        targetMeanPrice: fd.targetMeanPrice?.raw,
+        recommendationKey: fd.recommendationKey,
+        numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw,
+        dividendYield:   sd.dividendYield?.raw,
+        trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw,
+        epsTrailingTwelveMonths: ks.trailingEps?.raw,
+        epsForward:      ks.forwardEps?.raw,
+        revenueGrowth:   fd.revenueGrowth?.raw,
+        currentPrice:    fd.currentPrice?.raw,
+      };
+    } catch { continue; }
+  }
+  return null;
 }
 async function fetchAll() {
   const tickers=[...new Set([...HOLDINGS.map(h=>h.ticker),...WATCH.map(w=>w.ticker)])];
@@ -763,45 +821,16 @@ function renderWatch() {
 // ══════════════════════════════════════════
 // ── Live fundamentals fetch ──
 async function fetchFundamentals(ticker) {
-  // Try v7 quote first, then v8 chart summary, then v10 quoteSummary
-  const endpoints = [
-    'https://query2.finance.yahoo.com/v7/finance/quote?symbols='+ticker+'&fields=trailingPE,forwardPE,priceToBook,marketCap,targetMeanPrice,recommendationKey,numberOfAnalystOpinions,dividendYield,trailingAnnualDividendYield,epsTrailingTwelveMonths,epsForward,revenueGrowth,regularMarketPrice',
-    'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+ticker+'&fields=trailingPE,forwardPE,priceToBook,marketCap,targetMeanPrice,recommendationKey,numberOfAnalystOpinions,dividendYield,trailingAnnualDividendYield,epsTrailingTwelveMonths,epsForward,revenueGrowth,regularMarketPrice',
-    'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'+ticker+'?modules=summaryDetail,defaultKeyStatistics,financialData,recommendationTrend,earningsTrend',
-  ];
-  for (const url of endpoints) {
-    try {
-      const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
-      if (!r.ok) continue;
-      const j = await r.json();
-      // v7 format
-      if (j.quoteResponse?.result?.[0]) return j.quoteResponse.result[0];
-      // v10 quoteSummary format - remap to same shape
-      if (j.quoteSummary?.result?.[0]) {
-        const q = j.quoteSummary.result[0];
-        const sd = q.summaryDetail || {};
-        const ks = q.defaultKeyStatistics || {};
-        const fd = q.financialData || {};
-        return {
-          trailingPE:           sd.trailingPE?.raw,
-          forwardPE:            sd.forwardPE?.raw,
-          priceToBook:          ks.priceToBook?.raw,
-          marketCap:            sd.marketCap?.raw,
-          targetMeanPrice:      fd.targetMeanPrice?.raw,
-          recommendationKey:    fd.recommendationKey,
-          numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw,
-          dividendYield:        sd.dividendYield?.raw,
-          trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw,
-          epsTrailingTwelveMonths: ks.trailingEps?.raw,
-          epsForward:           ks.forwardEps?.raw,
-          revenueGrowth:        fd.revenueGrowth?.raw,
-          regularMarketPrice:   fd.currentPrice?.raw,
-        };
-      }
-    } catch { continue; }
+  // First try the detailed v10 endpoint using all available proxies
+  const proxies = ['https://corsproxy.io/?','https://api.allorigins.win/raw?url='];
+  for (const px of proxies) {
+    const f = await fetchFundExtra(ticker, px);
+    if (f) return f;
   }
-  return null;
+  // Fall back to whatever was cached in fundCache during price fetch
+  return fundCache[ticker] || null;
 }
+
 function fmtMC(v){if(!v)return'—';if(v>=1e12)return'$'+(v/1e12).toFixed(2)+'T';if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B';return'$'+(v/1e6).toFixed(0)+'M';}
 function fmtP(v,d=2){return v!=null?'$'+v.toFixed(d):'—';}
 function fmtN(v,d=2){return v!=null?v.toFixed(d):'—';}
