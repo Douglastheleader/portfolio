@@ -580,38 +580,70 @@ async function fetchPrice(t) {
 }
 
 async function fetchFundExtra(t, px) {
-  // Use the same working proxy to fetch quote summary v10
   const usePx = px || PROXY;
+  // Try v10 quoteSummary, v11 quoteSummary, and v7 quote
   const endpoints = [
     'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
     'https://query1.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
+    'https://query2.finance.yahoo.com/v11/finance/quoteSummary/'+t+'?modules=summaryDetail%2CdefaultKeyStatistics%2CfinancialData',
+    'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+t,
   ];
   for (const url of endpoints) {
     try {
       const r = await fetch(usePx + encodeURIComponent(url), {cache:'no-store'});
       if (!r.ok) continue;
       const j = await r.json();
-      if (!j.quoteSummary?.result?.[0]) continue;
-      const q  = j.quoteSummary.result[0];
-      const sd = q.summaryDetail || {};
-      const ks = q.defaultKeyStatistics || {};
-      const fd = q.financialData || {};
-      return {
-        marketCap:       sd.marketCap?.raw,
-        trailingPE:      sd.trailingPE?.raw,
-        forwardPE:       sd.forwardPE?.raw,
-        priceToBook:     ks.priceToBook?.raw,
-        targetMeanPrice: fd.targetMeanPrice?.raw,
-        recommendationKey: fd.recommendationKey,
-        numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw,
-        dividendYield:   sd.dividendYield?.raw,
-        trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw,
-        epsTrailingTwelveMonths: ks.trailingEps?.raw,
-        epsForward:      ks.forwardEps?.raw,
-        revenueGrowth:   fd.revenueGrowth?.raw,
-        currentPrice:    fd.currentPrice?.raw,
-      };
-    } catch { continue; }
+      console.log('[Fund] '+t+' endpoint:',url.split('/')[4],'keys:', Object.keys(j));
+
+      // v7 quote format
+      if (j.quoteResponse?.result?.[0]) {
+        const q = j.quoteResponse.result[0];
+        console.log('[Fund v7] fields:', Object.keys(q).join(','));
+        return {
+          marketCap:       q.marketCap,
+          trailingPE:      q.trailingPE,
+          forwardPE:       q.forwardPE,
+          priceToBook:     q.priceToBook,
+          targetMeanPrice: q.targetMeanPrice,
+          recommendationKey: q.recommendationKey,
+          numberOfAnalystOpinions: q.numberOfAnalystOpinions,
+          dividendYield:   q.trailingAnnualDividendYield || q.dividendYield,
+          trailingAnnualDividendYield: q.trailingAnnualDividendYield,
+          epsTrailingTwelveMonths: q.epsTrailingTwelveMonths,
+          epsForward:      q.epsForward,
+          revenueGrowth:   q.revenueGrowth,
+          currentPrice:    q.regularMarketPrice,
+        };
+      }
+
+      // v10/v11 quoteSummary format
+      if (j.quoteSummary?.result?.[0]) {
+        const q  = j.quoteSummary.result[0];
+        const sd = q.summaryDetail || {};
+        const ks = q.defaultKeyStatistics || {};
+        const fd = q.financialData || {};
+        console.log('[Fund v10] sd keys:', Object.keys(sd).slice(0,8).join(','));
+        console.log('[Fund v10] fd keys:', Object.keys(fd).slice(0,8).join(','));
+        const result = {
+          marketCap:       sd.marketCap?.raw       ?? sd.marketCap,
+          trailingPE:      sd.trailingPE?.raw      ?? sd.trailingPE,
+          forwardPE:       sd.forwardPE?.raw        ?? sd.forwardPE,
+          priceToBook:     ks.priceToBook?.raw      ?? ks.priceToBook,
+          targetMeanPrice: fd.targetMeanPrice?.raw  ?? fd.targetMeanPrice,
+          recommendationKey: fd.recommendationKey,
+          numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw ?? fd.numberOfAnalystOpinions,
+          dividendYield:   sd.dividendYield?.raw    ?? sd.dividendYield,
+          trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw ?? sd.trailingAnnualDividendYield,
+          epsTrailingTwelveMonths: ks.trailingEps?.raw ?? ks.trailingEps,
+          epsForward:      ks.forwardEps?.raw       ?? ks.forwardEps,
+          revenueGrowth:   fd.revenueGrowth?.raw    ?? fd.revenueGrowth,
+          currentPrice:    fd.currentPrice?.raw     ?? fd.currentPrice,
+        };
+        console.log('[Fund v10] result marketCap:', result.marketCap, 'PE:', result.trailingPE);
+        // Only return if we got at least some useful data
+        if (result.marketCap || result.trailingPE || result.currentPrice) return result;
+      }
+    } catch(e) { console.warn('[Fund] error:', e.message); continue; }
   }
   return null;
 }
