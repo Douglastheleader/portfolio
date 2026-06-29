@@ -341,7 +341,10 @@ setInterval(clock, 1000); clock();
 // ─── FETCH ───
 async function fetchPrice(t) {
   try {
-    const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=2d`);
+    const PROXY = 'https://corsproxy.io/?';
+    const r = await 
+    fetch(`${PROXY}https://query1.finance.yahoo.com/v8/finance/chart/${t}?
+    interval=1d&range=2d`);
     const j = await r.json();
     const m = j.chart.result[0].meta;
     const p = m.regularMarketPrice || m.previousClose;
