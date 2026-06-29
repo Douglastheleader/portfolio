@@ -232,6 +232,33 @@ input,textarea{-webkit-appearance:none;appearance:none}
 .pnl-val{font-family:var(--mono);font-size:10px;min-width:64px;text-align:right;font-weight:600}
 .chart-empty{padding:24px;text-align:center;color:var(--muted);font-size:12px}
 
+
+/* ── TRADE LOG ── */
+.trade-form{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;box-shadow:var(--shadow)}
+.trade-form-title{font-size:13px;font-weight:700;margin-bottom:10px}
+.trade-type-row{display:flex;gap:6px;margin-bottom:10px}
+.trade-type-btn{flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;border:1px solid var(--border);background:var(--surface2);color:var(--muted);transition:all .15s}
+.trade-type-btn.buy.active{background:var(--green-bg);color:var(--green);border-color:var(--green)}
+.trade-type-btn.sell.active{background:var(--red-bg);color:var(--red);border-color:var(--red)}
+.trade-submit{width:100%;padding:10px;border-radius:8px;background:var(--primary);color:#fff;font-size:13px;font-weight:700;margin-top:8px}
+.trade-log-list{display:flex;flex-direction:column;gap:7px}
+.trade-item{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:11px 13px;box-shadow:var(--shadow)}
+.ti-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.ti-left{display:flex;align-items:center;gap:7px}
+.ti-type{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px}
+.ti-type.buy{background:var(--green-bg);color:var(--green)}
+.ti-type.sell{background:var(--red-bg);color:var(--red)}
+.ti-sym{font-family:var(--mono);font-size:13px;font-weight:700}
+.ti-date{font-size:10px;color:var(--muted)}
+.ti-price{font-family:var(--mono);font-size:13px;font-weight:700}
+.ti-detail{display:flex;gap:12px;font-size:11px;color:var(--muted)}
+.ti-del{color:var(--red);font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--red-bg)}
+.trade-empty{padding:24px;text-align:center;color:var(--muted);font-size:12px}
+.trade-summary{background:var(--surface2);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.ts-cell{text-align:center}
+.ts-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+.ts-val{font-family:var(--mono);font-size:13px;font-weight:700}
+
 </style>
 </head>
 <body>
@@ -277,6 +304,7 @@ input,textarea{-webkit-appearance:none;appearance:none}
   <button class="tab-btn" onclick="switchTab('sector',this)">🌐 版塊新聞</button>
   <button class="tab-btn" onclick="switchTab('watch',this)">👀 留意名單</button>
   <button class="tab-btn" onclick="switchTab('charts',this)">📈 圖表</button>
+  <button class="tab-btn" onclick="switchTab('trades',this)">🧾 交易記錄</button>
 </div>
 
 <!-- PAGES -->
@@ -298,6 +326,31 @@ input,textarea{-webkit-appearance:none;appearance:none}
 
 <div class="page" id="pg-charts">
   <div id="charts-container"></div>
+</div>
+
+<div class="page" id="pg-trades">
+  <!-- Add Trade Form -->
+  <div class="trade-form">
+    <div class="trade-form-title">＋ 新增交易記錄</div>
+    <div class="trade-type-row">
+      <button class="trade-type-btn buy active" id="tr-buy-btn" onclick="setTradeType('buy')">📈 買入</button>
+      <button class="trade-type-btn sell" id="tr-sell-btn" onclick="setTradeType('sell')">📉 賣出</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:7px">
+      <div class="s-field"><label>股票代號 *</label><input id="tr-ticker" placeholder="AAPL" style="text-transform:uppercase"></div>
+      <div class="s-field"><label>日期 *</label><input id="tr-date" type="date"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:7px">
+      <div class="s-field"><label>股數 *</label><input id="tr-shares" type="number" step="any" placeholder="0.00"></div>
+      <div class="s-field"><label>價格 US$ *</label><input id="tr-price" type="number" step="any" placeholder="0.00"></div>
+    </div>
+    <div class="s-field" style="margin-bottom:7px"><label>備注</label><input id="tr-note" placeholder="可選填備注"></div>
+    <button class="trade-submit" onclick="addTrade()">記錄交易</button>
+  </div>
+  <!-- Summary -->
+  <div id="trade-summary-row"></div>
+  <!-- Log -->
+  <div class="trade-log-list" id="trade-log"></div>
 </div>
 
 <!-- SETTINGS FAB -->
@@ -492,13 +545,16 @@ setInterval(updateClock,1000); updateClock();
 const PROXY = 'https://corsproxy.io/?';
 async function fetchPrice(t) {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=2d`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`;
     const r = await fetch(PROXY + encodeURIComponent(url));
     const j = await r.json();
     const m = j.chart.result[0].meta;
-    const p = m.regularMarketPrice || m.previousClose;
+    const closes = j.chart.result[0].indicators?.quote?.[0]?.close?.filter(x=>x!=null) || [];
+    const p    = m.regularMarketPrice || m.previousClose;
     const prev = m.previousClose || p;
-    return { p, ch:p-prev, pct:((p-prev)/prev)*100 };
+    const hi52 = closes.length ? Math.max(...closes) : null;
+    const lo52 = closes.length ? Math.min(...closes) : null;
+    return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52 };
   } catch { return null; }
 }
 async function fetchAll() {
@@ -539,7 +595,18 @@ function renderPrices(loading=false) {
         <div class="pc-stat"><div class="pc-stat-label">盈虧</div><div class="pc-stat-val ${pnlCls}">${pnl>=0?'+':''}$${Math.abs(pnl).toFixed(0)}</div></div>
         <div class="pc-stat"><div class="pc-stat-label">回報</div><div class="pc-stat-val ${pnlCls}">${pct>=0?'+':''}${pct.toFixed(1)}%</div></div>
       </div>
-      <div class="pnl-bar"><div class="pnl-fill" style="width:${barW}%;background:${barColor}"></div></div>
+      ${d.hi52&&d.lo52?`<div style="margin-top:7px">
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:3px">
+          <span>52W 低 $${d.lo52.toFixed(2)}</span>
+          <span style="font-weight:700;color:var(--primary)">52W</span>
+          <span>52W 高 $${d.hi52.toFixed(2)}</span>
+        </div>
+        <div style="background:var(--surface2);border-radius:999px;height:5px;position:relative;overflow:hidden">
+          <div style="position:absolute;left:0;right:0;height:100%;background:linear-gradient(to right,var(--red),var(--gold),var(--green));opacity:.25;border-radius:999px"></div>
+          <div style="position:absolute;left:${((d.p-d.lo52)/(d.hi52-d.lo52)*100).toFixed(1)}%;transform:translateX(-50%);width:8px;height:8px;border-radius:50%;background:var(--primary);top:-1.5px;border:2px solid var(--surface)"></div>
+        </div>
+      </div>`:''}
+      <div class="pnl-bar" style="margin-top:5px"><div class="pnl-fill" style="width:${barW}%;background:${barColor}"></div></div>
     </div>`;
   }).join('');
 }
@@ -599,18 +666,29 @@ function sentiment(t){
   return 'neu';
 }
 async function fetchRSS(query) {
-  const url=`https://news.google.com/rss/search?q=${encodeURIComponent(query)}+stock&hl=en-US&gl=US&ceid=US:en`;
-  try {
-    const r=await fetch(PROXY+encodeURIComponent(url));
-    const txt=await r.text();
-    const xml=new DOMParser().parseFromString(txt,'text/xml');
-    return Array.from(xml.querySelectorAll('item')).slice(0,3).map(item=>({
-      title: item.querySelector('title')?.textContent?.replace(/\s*-[^-]*$/,'').trim()||'',
-      time:  timeAgo(item.querySelector('pubDate')?.textContent||''),
-      s:     sentiment(item.querySelector('title')?.textContent||''),
-      link:  item.querySelector('link')?.textContent||'#',
-    }));
-  } catch { return []; }
+  const ts = Date.now();
+  // Try Google News RSS first, then Yahoo Finance RSS as fallback
+  const urls = [
+    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en&ts=${ts}`,
+    `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(query.split(' ')[0])}&region=US&lang=en-US`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
+      if (!r.ok) continue;
+      const txt = await r.text();
+      const xml = new DOMParser().parseFromString(txt, 'text/xml');
+      const items = Array.from(xml.querySelectorAll('item')).slice(0, 3);
+      if (!items.length) continue;
+      return items.map(item => ({
+        title: item.querySelector('title')?.textContent?.replace(/\s*-\s*[^-]{0,40}$/, '').trim() || '',
+        time:  timeAgo(item.querySelector('pubDate')?.textContent || ''),
+        s:     sentiment(item.querySelector('title')?.textContent || ''),
+        link:  item.querySelector('link')?.textContent || '#',
+      })).filter(x => x.title.length > 5);
+    } catch { continue; }
+  }
+  return [];
 }
 
 async function loadHoldingNews() {
@@ -822,6 +900,7 @@ function switchTab(id,btn){
   if(id==='news'&&!newsLoaded.holdings){ loadHoldingNews(); newsLoaded.holdings=true; }
   if(id==='sector'&&!newsLoaded.sector){ loadSectorNews(); newsLoaded.sector=true; }
   if(id==='charts'){ renderCharts(); }
+  if(id==='trades'){ renderTrades(); }
 }
 
 // ══════════════════════════════════════════
@@ -833,13 +912,12 @@ async function doRefresh(){
   renderPrices(true);
   await fetchAll();
   renderPrices(); renderSummary(); renderTape(); renderWatch();
-  // Reset news loaded flags so they refresh on next visit
+  // Always reload whichever news tab is active
   newsLoaded={holdings:false,sector:false};
-  // If currently on news tab, reload immediately
   const activeTab=document.querySelector('.tab-btn.active');
   if(activeTab){
     const lbl=activeTab.textContent;
-    if(lbl.includes('新聞')&&lbl.includes('即時')){loadHoldingNews();newsLoaded.holdings=true;}
+    if(lbl.includes('即時新聞')){loadHoldingNews();newsLoaded.holdings=true;}
     if(lbl.includes('版塊')){loadSectorNews();newsLoaded.sector=true;}
   }
   ri.classList.remove('spin');
@@ -893,6 +971,97 @@ document.getElementById('inst-dismiss').addEventListener('click',()=>{
   document.getElementById('inst-banner').classList.remove('show');
 });
 
+
+
+// ══════════════════════════════════════════
+//  TRADE LOG
+// ══════════════════════════════════════════
+const LSK_TRADES = 'pwa_trades_v1';
+let TRADES = [];
+let tradeType = 'buy';
+
+function loadTrades() {
+  try { const t=localStorage.getItem(LSK_TRADES); if(t) TRADES=JSON.parse(t); } catch{}
+  // Set today as default date
+  const d=new Date().toISOString().split('T')[0];
+  const el=document.getElementById('tr-date');
+  if(el) el.value=d;
+}
+function saveTrades() { localStorage.setItem(LSK_TRADES, JSON.stringify(TRADES)); }
+
+function setTradeType(t) {
+  tradeType=t;
+  document.getElementById('tr-buy-btn').classList.toggle('active', t==='buy');
+  document.getElementById('tr-sell-btn').classList.toggle('active', t==='sell');
+}
+
+function addTrade() {
+  const ticker=(document.getElementById('tr-ticker').value||'').trim().toUpperCase();
+  const date=document.getElementById('tr-date').value;
+  const shares=parseFloat(document.getElementById('tr-shares').value);
+  const price=parseFloat(document.getElementById('tr-price').value);
+  const note=(document.getElementById('tr-note').value||'').trim();
+  if(!ticker||!date||isNaN(shares)||isNaN(price)||shares<=0||price<=0){toast('請填寫代號、日期、股數及價格');return;}
+  TRADES.unshift({ id:Date.now(), type:tradeType, ticker, date, shares, price, note, total:shares*price });
+  saveTrades();
+  ['tr-ticker','tr-shares','tr-price','tr-note'].forEach(id=>document.getElementById(id).value='');
+  renderTrades();
+  toast((tradeType==='buy'?'✓ 已記錄買入 ':'✓ 已記錄賣出 ')+ticker);
+}
+
+function deleteTrade(id) {
+  TRADES=TRADES.filter(t=>t.id!==id);
+  saveTrades(); renderTrades();
+  toast('已刪除交易記錄');
+}
+
+function renderTrades() {
+  // Summary
+  const buys=TRADES.filter(t=>t.type==='buy');
+  const sells=TRADES.filter(t=>t.type==='sell');
+  const totalBuy=buys.reduce((s,t)=>s+t.total,0);
+  const totalSell=sells.reduce((s,t)=>s+t.total,0);
+  const realised=totalSell-buys.filter(b=>sells.some(s=>s.ticker===b.ticker)).reduce((s,t)=>s+t.total,0);
+  const sr=document.getElementById('trade-summary-row');
+  if(TRADES.length>0){
+    sr.innerHTML=`<div class="trade-summary">
+      <div class="ts-cell"><div class="ts-label">買入總額</div><div class="ts-val" style="color:var(--green)">$${totalBuy>=1000?(totalBuy/1000).toFixed(2)+'K':totalBuy.toFixed(0)}</div></div>
+      <div class="ts-cell"><div class="ts-label">賣出總額</div><div class="ts-val" style="color:var(--red)">$${totalSell>=1000?(totalSell/1000).toFixed(2)+'K':totalSell.toFixed(0)}</div></div>
+      <div class="ts-cell"><div class="ts-label">交易次數</div><div class="ts-val">${TRADES.length}</div></div>
+    </div>`;
+  } else { sr.innerHTML=''; }
+
+  // Log
+  const el=document.getElementById('trade-log');
+  if(!TRADES.length){el.innerHTML='<div class="trade-empty">📋 暫無交易記錄<br><span style="font-size:11px">上方填寫後按「記錄交易」即可加入</span></div>';return;}
+  el.innerHTML=TRADES.map(t=>{
+    const d=new Date(t.date).toLocaleDateString('zh-HK',{year:'numeric',month:'short',day:'numeric'});
+    const curPrice=cache[t.ticker]?.p;
+    let pnlHtml='';
+    if(curPrice&&t.type==='buy'){
+      const pnl=(curPrice-t.price)*t.shares;
+      const pct=((curPrice-t.price)/t.price)*100;
+      const col=pnl>=0?'var(--green)':'var(--red)';
+      pnlHtml=`<span style="color:${col};font-weight:600">${pnl>=0?'+$':'-$'}${Math.abs(pnl).toFixed(0)} (${pct>=0?'+':''}${pct.toFixed(1)}%)</span>`;
+    }
+    return `<div class="trade-item">
+      <div class="ti-top">
+        <div class="ti-left">
+          <span class="ti-type ${t.type}">${t.type==='buy'?'買入':'賣出'}</span>
+          <span class="ti-sym">${t.ticker}</span>
+        </div>
+        <button class="ti-del" onclick="deleteTrade(${t.id})">刪除</button>
+      </div>
+      <div class="ti-detail">
+        <span>${t.shares} 股 @ $${t.price.toFixed(2)}</span>
+        <span>總額 $${t.total.toFixed(0)}</span>
+        <span>${d}</span>
+      </div>
+      ${pnlHtml?`<div style="margin-top:5px;font-size:11px">${pnlHtml} 浮動盈虧</div>`:''}
+      ${t.note?`<div style="margin-top:4px;font-size:11px;color:var(--muted)">${t.note}</div>`:''}
+    </div>`;
+  }).join('');
+}
 
 // ══════════════════════════════════════════
 //  CHARTS
@@ -1063,6 +1232,7 @@ function renderCharts() {
 //  INIT
 // ══════════════════════════════════════════
 loadLS();
+loadTrades();
 renderPrices(true);
 renderWatch();
 doRefresh();
