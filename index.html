@@ -516,12 +516,35 @@ const STRATS = {
 
 // Sector news queries (影響持倉的版塊)
 const SECTORS = [
-  { name:'AI & 科技',      query:'AI technology semiconductor stocks',  impact:'high', tickers:['NVDA','ORCL','AAPL'] },
-  { name:'美股大盤',        query:'S&P 500 stock market rally',         impact:'high', tickers:['VOO','VT'] },
-  { name:'能源與電網',      query:'GE Vernova energy grid infrastructure',impact:'med', tickers:['GEV'] },
-  { name:'農業與原材料',    query:'ADM agriculture commodity prices',    impact:'med', tickers:['ADM'] },
-  { name:'美聯儲與利率',    query:'Federal Reserve interest rate 2026',  impact:'high', tickers:['VOO','VT','AAPL'] },
-  { name:'社交媒體廣告',    query:'social media advertising revenue Meta Reddit', impact:'med', tickers:['META','RDDT'] },
+  // ── 美股版塊 ──
+  { name:'AI & 科技',       query:'人工智能 科技股 半導體 美股',               impact:'high', tickers:['NVDA','ORCL','AAPL'],  region:'us' },
+  { name:'美股大盤',         query:'標普500 美股 道瓊斯 納斯達克',             impact:'high', tickers:['VOO','VT'],            region:'us' },
+  { name:'能源與電網',       query:'GE Vernova 能源 電網 基礎設施',           impact:'med',  tickers:['GEV'],                 region:'us' },
+  { name:'農業與原材料',     query:'ADM 農業 大宗商品 原材料 糧食',           impact:'med',  tickers:['ADM'],                 region:'us' },
+  { name:'美聯儲與利率',     query:'美聯儲 利率 聯準會 加息 減息 2026',       impact:'high', tickers:['VOO','VT','AAPL'],     region:'us' },
+  { name:'社交媒體廣告',     query:'Meta Reddit 社交媒體 廣告收入 股票',       impact:'med',  tickers:['META','RDDT'],         region:'us' },
+  // ── 香港股市 ──
+  { name:'🇭🇰 恒生指數',     query:'恒生指數 港股 香港股市',                   impact:'high', tickers:['VT'],                 region:'hk' },
+  { name:'🇭🇰 港股科技',     query:'阿里巴巴 騰訊 香港科技股 中概股',         impact:'high', tickers:['VT'],                 region:'hk' },
+  { name:'🇭🇰 港元匯率',     query:'港元 聯繫匯率 香港金管局',               impact:'med',  tickers:['VT'],                 region:'hk' },
+  { name:'🇭🇰 香港經濟',     query:'香港經濟 GDP 香港財政 香港通脹',          impact:'med',  tickers:['VT'],                 region:'hk' },
+  // ── 台灣股市 ──
+  { name:'🇹🇼 台股加權',     query:'台灣加權指數 台股 台灣股市',              impact:'high', tickers:['VT'],                 region:'tw' },
+  { name:'🇹🇼 台積電半導體', query:'台積電 TSMC 半導體 晶片 台灣科技',        impact:'high', tickers:['VT','NVDA','AAPL'],   region:'tw' },
+  { name:'🇹🇼 台幣匯率',     query:'台幣 新台幣 台灣央行 匯率',              impact:'med',  tickers:['VT'],                 region:'tw' },
+  // ── 韓國股市 ──
+  { name:'🇰🇷 韓國KOSPI',    query:'韓國KOSPI 韓股 首爾股市',                impact:'med',  tickers:['VT'],                 region:'kr' },
+  { name:'🇰🇷 三星海力士',   query:'三星電子 SK海力士 韓國半導體 記憶體',     impact:'high', tickers:['VT','NVDA'],          region:'kr' },
+  { name:'🇰🇷 韓圜匯率',     query:'韓圜 韓國央行 韓國經濟',                 impact:'low',  tickers:['VT'],                 region:'kr' },
+  // ── 日本股市 ──
+  { name:'🇯🇵 日經225',      query:'日經225 日本股市 東京股市',               impact:'high', tickers:['VT'],                 region:'jp' },
+  { name:'🇯🇵 日圓匯率',     query:'日圓 日元 美元兌日圓 匯率',              impact:'high', tickers:['VT'],                 region:'jp' },
+  { name:'🇯🇵 日本央行',     query:'日本央行 日銀 加息 貨幣政策 2026',        impact:'high', tickers:['VT'],                 region:'jp' },
+  { name:'🇯🇵 日本科技',     query:'軟銀 索尼 豐田 日本科技股',              impact:'med',  tickers:['VT'],                 region:'jp' },
+  // ── 英國股市 ──
+  { name:'🇬🇧 富時100',      query:'富時100 FTSE 英國股市 倫敦股市',          impact:'med',  tickers:['VT'],                 region:'uk' },
+  { name:'🇬🇧 英倫銀行',     query:'英倫銀行 英國利率 英國通脹 貨幣政策',     impact:'med',  tickers:['VT'],                 region:'uk' },
+  { name:'🇬🇧 英鎊匯率',     query:'英鎊 英鎊兌美元 英國經濟',               impact:'low',  tickers:['VT'],                 region:'uk' },
 ];
 
 // ── LIVE STATE ──
@@ -587,7 +610,20 @@ setInterval(async ()=>{
 // ══════════════════════════════════════════
 //  FETCH STOCK PRICE
 // ══════════════════════════════════════════
-const PROXY = 'https://corsproxy.io/?';
+// ── Proxy pool (rotated per request to avoid 429) ──
+const PROXIES = [
+  'https://corsproxy.io/?',
+  'https://api.allorigins.win/raw?url=',
+  'https://thingproxy.freeboard.io/fetch/',
+  'https://cors-anywhere.herokuapp.com/',
+];
+let _proxyIdx = 0;
+function nextProxy() { const p=PROXIES[_proxyIdx%PROXIES.length]; _proxyIdx++; return p; }
+const PROXY = 'https://corsproxy.io/?'; // kept for price fetch compat
+
+// ── RSS cache (5 min TTL) to avoid hammering proxies ──
+const rssCache = {};
+const RSS_TTL  = 5 * 60 * 1000;
 let fundCache = {};
 
 async function fetchPrice(t) {
@@ -808,27 +844,40 @@ function sentiment(t){
   return 'neu';
 }
 async function fetchRSS(query) {
-  const ts = Date.now();
-  // Try Google News RSS first, then Yahoo Finance RSS as fallback
+  // Return cached result if fresh
+  const ckey = query.trim().toLowerCase();
+  const cached = rssCache[ckey];
+  if (cached && (Date.now()-cached.ts) < RSS_TTL) return cached.data;
+
   const urls = [
-    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en&ts=${ts}`,
-    `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(query.split(' ')[0])}&region=US&lang=en-US`,
+    'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
+    'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=zh-TW&gl=TW&ceid=TW:zh-Hant',
+    'https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
   ];
+
   for (const url of urls) {
-    try {
-      const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
-      if (!r.ok) continue;
-      const txt = await r.text();
-      const xml = new DOMParser().parseFromString(txt, 'text/xml');
-      const items = Array.from(xml.querySelectorAll('item')).slice(0, 3);
-      if (!items.length) continue;
-      return items.map(item => ({
-        title: item.querySelector('title')?.textContent?.replace(/\s*-\s*[^-]{0,40}$/, '').trim() || '',
-        time:  timeAgo(item.querySelector('pubDate')?.textContent || ''),
-        s:     sentiment(item.querySelector('title')?.textContent || ''),
-        link:  item.querySelector('link')?.textContent || '#',
-      })).filter(x => x.title.length > 5);
-    } catch { continue; }
+    // Try each proxy in rotation
+    for (let attempt=0; attempt<PROXIES.length; attempt++) {
+      const px = PROXIES[(attempt) % PROXIES.length];
+      try {
+        const r = await fetch(px + encodeURIComponent(url), {cache:'no-store'});
+        if (!r.ok) continue;
+        const txt = await r.text();
+        const xml = new DOMParser().parseFromString(txt, 'text/xml');
+        const items = Array.from(xml.querySelectorAll('item')).slice(0, 4);
+        if (!items.length) continue;
+        const data = items.map(item => ({
+          title: item.querySelector('title')?.textContent?.replace(/<[^>]+>/g,'').replace(/\s*-\s*[^-]{0,50}$/,'').trim()||'',
+          time:  timeAgo(item.querySelector('pubDate')?.textContent||''),
+          s:     sentiment(item.querySelector('title')?.textContent||''),
+          link:  item.querySelector('link')?.textContent||'#',
+        })).filter(x=>x.title.length>8);
+        if (data.length) {
+          rssCache[ckey] = {ts:Date.now(), data};
+          return data;
+        }
+      } catch { continue; }
+    }
   }
   return [];
 }
@@ -836,7 +885,13 @@ async function fetchRSS(query) {
 async function loadHoldingNews() {
   const c=document.getElementById('news-holdings');
   c.innerHTML='<div class="news-loading">📡 載入持股新聞中…</div>';
-  const results=await Promise.all(HOLDINGS.map(h=>fetchRSS(h.ticker+' '+h.name).then(r=>({ticker:h.ticker,items:r}))));
+  // Stagger holding news requests to avoid proxy rate limiting
+  const results=[];
+  for(const h of HOLDINGS){
+    await new Promise(r=>setTimeout(r,400));
+    const items=await fetchRSS(h.ticker+' '+h.name+' 股票 新聞');
+    results.push({ticker:h.ticker,items});
+  }
   let html='';
   results.forEach(({ticker,items})=>{
     if(!items.length) return;
@@ -852,33 +907,71 @@ async function loadHoldingNews() {
   c.innerHTML=html||'<div class="news-loading">暫時無法載入新聞</div>';
 }
 
+let sectorRegion = 'us';
+
 async function loadSectorNews() {
-  const c=document.getElementById('news-sector');
-  c.innerHTML='<div class="news-loading">📡 載入版塊新聞中…</div>';
-  let html='';
-  for(const sec of SECTORS){
-    const items=await fetchRSS(sec.query);
-    if(!items.length) continue;
-    const impCls={high:'impact-high',med:'impact-med',low:'impact-low'}[sec.impact]||'impact-low';
-    const impLbl={high:'高影響',med:'中影響',low:'低影響'}[sec.impact]||'';
-    const related=sec.tickers.filter(t=>HOLDINGS.some(h=>h.ticker===t)||WATCH.some(w=>w.ticker===t));
-    html+=`<div class="news-section-title">
-      ${sec.name}
-      <span style="display:flex;gap:4px;align-items:center">
-        ${related.map(t=>`<span class="nc-tag">${t}</span>`).join('')}
-        <span class="nc-impact ${impCls}">${impLbl}</span>
-      </span>
-    </div>`;
-    items.forEach(n=>{
-      const dot=n.s==='pos'?'var(--green)':n.s==='neg'?'var(--red)':'var(--gold)';
-      html+=`<div class="news-card" onclick="window.open('${n.link}','_blank')">
-        <div class="nc-top"><span class="nc-sector-tag">${sec.name}</span><span class="nc-sent" style="background:${dot}"></span></div>
-        <div class="nc-title">${n.title}</div>
-        <div class="nc-meta">${n.time}</div>
-      </div>`;
+  renderSectorFilter();
+  await loadSectorByRegion();
+}
+
+function renderSectorFilter() {
+  const c = document.getElementById('news-sector');
+  const regions = [
+    {id:'us', flag:'🇺🇸', label:'美股'},
+    {id:'hk', flag:'🇭🇰', label:'香港'},
+    {id:'tw', flag:'🇹🇼', label:'台灣'},
+    {id:'kr', flag:'🇰🇷', label:'韓國'},
+    {id:'jp', flag:'🇯🇵', label:'日本'},
+    {id:'uk', flag:'🇬🇧', label:'英國'},
+  ];
+  const filterHtml = '<div style="display:flex;gap:6px;padding:10px 0 6px;flex-wrap:wrap" id="sector-filter-row">'
+    + regions.map(r =>
+        '<button style="font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid var(--border);'
+        +'background:'+(sectorRegion===r.id?'var(--primary)':'var(--surface2)')+';'
+        +'color:'+(sectorRegion===r.id?'#fff':'var(--muted)')+';font-weight:600;transition:all .15s" '
+        +'onclick="sectorRegion=\''+r.id+'\';loadSectorByRegion()">'+r.flag+' '+r.label+'</button>'
+      ).join('')
+    + '</div><div id="sector-news-body"><div class="news-loading">📡 載入中…</div></div>';
+  c.innerHTML = filterHtml;
+}
+
+async function loadSectorByRegion() {
+  const body = document.getElementById('sector-news-body');
+  if (!body) { await loadSectorNews(); return; }
+  // Update filter button styles
+  const btns = document.querySelectorAll('#sector-filter-row button');
+  const regionOrder = ['us','hk','tw','kr','jp','uk'];
+  btns.forEach((b,i) => {
+    const isActive = regionOrder[i] === sectorRegion;
+    b.style.background = isActive ? 'var(--primary)' : 'var(--surface2)';
+    b.style.color = isActive ? '#fff' : 'var(--muted)';
+  });
+  body.innerHTML = '<div class="news-loading">📡 載入版塊新聞中…</div>';
+  const filtered = SECTORS.filter(s => s.region === sectorRegion);
+  let html = '';
+  for (const sec of filtered) {
+    await new Promise(r=>setTimeout(r,300)); // stagger requests 300ms apart
+    const items = await fetchRSS(sec.query);
+    if (!items.length) continue;
+    const impCls = {high:'impact-high',med:'impact-med',low:'impact-low'}[sec.impact]||'impact-low';
+    const impLbl = {high:'高影響',med:'中影響',low:'低影響'}[sec.impact]||'';
+    const related = sec.tickers.filter(t=>HOLDINGS.some(h=>h.ticker===t)||WATCH.some(w=>w.ticker===t));
+    html += '<div class="news-section-title">'
+      + sec.name
+      + '<span style="display:flex;gap:4px;align-items:center">'
+      + related.map(t=>'<span class="nc-tag">'+t+'</span>').join('')
+      + '<span class="nc-impact '+impCls+'">'+impLbl+'</span>'
+      + '</span></div>';
+    items.forEach(n => {
+      const dot = n.s==='pos'?'var(--green)':n.s==='neg'?'var(--red)':'var(--gold)';
+      html += '<div class="news-card" onclick="window.open(\''+n.link+'\',\'_blank\')">'
+        + '<div class="nc-top"><span class="nc-sector-tag">'+sec.name+'</span><span class="nc-sent" style="background:'+dot+'"></span></div>'
+        + '<div class="nc-title">'+n.title+'</div>'
+        + '<div class="nc-meta">'+n.time+'</div>'
+        + '</div>';
     });
   }
-  c.innerHTML=html||'<div class="news-loading">暫時無法載入版塊新聞</div>';
+  body.innerHTML = html || '<div class="news-loading">暫時無法載入版塊新聞</div>';
 }
 
 // ══════════════════════════════════════════
@@ -1168,7 +1261,7 @@ async function doRefresh(){
   if(activeTab){
     const lbl=activeTab.textContent;
     if(lbl.includes('即時新聞')){loadHoldingNews();newsLoaded.holdings=true;}
-    if(lbl.includes('版塊')){loadSectorNews();newsLoaded.sector=true;}
+    if(lbl.includes('版塊')){sectorRegion='us';loadSectorNews();newsLoaded.sector=true;}
   }
   ri.classList.remove('spin');
 }
