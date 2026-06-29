@@ -1136,7 +1136,7 @@ function openDetail(i) {
     const stopPct  = isETF ? 0.90 : 0.93; // ETF 10% / 個股 7%
     const costFloor = h.cost * (isETF ? 0.92 : 0.92); // 最多虧 8% 成本
     const priceStop = price * stopPct;
-    const rawStop   = Math.max(priceStop, costFloor);
+    const rawStop   = Math.min(priceStop, costFloor);
     dynStop = '$' + rawStop.toFixed(2);
 
     // Color coding
@@ -1159,7 +1159,7 @@ function openDetail(i) {
   document.getElementById('d-strat').innerHTML=
     '<div class="strat-box"><div class="strat-label">操作建議</div><div class="strat-val">'+rLbl2+'</div></div>'
     +'<div class="strat-box"><div class="strat-label">現價狀態</div><div class="strat-val">'+dynTrigger+'</div></div>'
-    +'<div class="strat-box" style="grid-column:span 2"><div class="strat-label">動態止蝕位 <span style="font-size:10px;opacity:.6">（現價×93% 或 成本×92%，取較高）</span></div><div class="strat-val" style="'+stopClass+'">'+dynStop+stopNote+'</div></div>'
+    +'<div class="strat-box" style="grid-column:span 2"><div class="strat-label">動態止蝕位 <span style="font-size:10px;opacity:.6">（現價×93% 或 成本×92%，取較低）</span></div><div class="strat-val" style="'+stopClass+'">'+dynStop+stopNote+'</div></div>'
     +'<div id="d-fund"><div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">📡 載入即時基本面中…</div></div>';
   document.getElementById('detail-modal').classList.add('show');
 
