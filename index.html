@@ -761,31 +761,80 @@ function renderWatch() {
 // ══════════════════════════════════════════
 //  DETAIL SHEET
 // ══════════════════════════════════════════
+// ── Live fundamentals fetch ──
+async function fetchFundamentals(ticker) {
+  try {
+    const url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+ticker+'&fields=trailingPE,forwardPE,priceToBook,marketCap,targetMeanPrice,recommendationKey,numberOfAnalystOpinions,dividendYield,trailingAnnualDividendYield,epsTrailingTwelveMonths,epsForward,revenueGrowth,earningsGrowth,regularMarketPrice';
+    const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
+    const j = await r.json();
+    return j.quoteResponse?.result?.[0] || null;
+  } catch { return null; }
+}
+function fmtMC(v){if(!v)return'—';if(v>=1e12)return'$'+(v/1e12).toFixed(2)+'T';if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B';return'$'+(v/1e6).toFixed(0)+'M';}
+function fmtP(v,d=2){return v!=null?'$'+v.toFixed(d):'—';}
+function fmtN(v,d=2){return v!=null?v.toFixed(d):'—';}
+function fmtPct(v){return v!=null?(v*100).toFixed(2)+'%':'—';}
+function recLbl(k){return{strongBuy:'強烈買入',buy:'買入',hold:'持有',sell:'賣出',strongSell:'強烈賣出'}[k]||k||'—';}
+function recCol(k){if(!k)return'var(--muted)';if(k.includes('buy')||k.includes('Buy'))return'var(--green)';if(k.includes('sell')||k.includes('Sell'))return'var(--red)';return'var(--gold)';}
+
 function openDetail(i) {
   const h=HOLDINGS[i]; const d=cache[h.ticker];
   const s=STRATS[h.ticker]||{rec:'hold',trigger:'—',stop:'—',note:'—'};
   const cost=h.shares*h.cost;
   document.getElementById('d-sym').textContent=h.ticker;
   document.getElementById('d-name').textContent=h.name;
-  let rows=`
-    <div class="d-box"><div class="d-box-label">股數</div><div class="d-box-val">${h.shares}</div></div>
-    <div class="d-box"><div class="d-box-label">均價</div><div class="d-box-val">$${h.cost.toFixed(2)}</div></div>
-    <div class="d-box"><div class="d-box-label">總成本</div><div class="d-box-val">$${cost.toFixed(2)}</div></div>`;
+  let rows='<div class="d-box"><div class="d-box-label">股數</div><div class="d-box-val">'+h.shares+'</div></div>'
+    +'<div class="d-box"><div class="d-box-label">均價</div><div class="d-box-val">$'+h.cost.toFixed(2)+'</div></div>'
+    +'<div class="d-box"><div class="d-box-label">總成本</div><div class="d-box-val">$'+cost.toFixed(2)+'</div></div>';
   if(d){
     const val=h.shares*d.p,pnl=val-cost,pct=(pnl/cost)*100;
-    rows+=`
-      <div class="d-box"><div class="d-box-label">現價</div><div class="d-box-val">$${d.p.toFixed(2)}</div></div>
-      <div class="d-box"><div class="d-box-label">市值</div><div class="d-box-val">$${val.toFixed(2)}</div></div>
-      <div class="d-box"><div class="d-box-label">盈虧</div><div class="d-box-val ${pnl>=0?'up':'dn'}">${pnl>=0?'+':''}$${pnl.toFixed(2)} (${pct>=0?'+':''}${pct.toFixed(2)}%)</div></div>`;
+    const pnlCls=pnl>=0?'up':'dn';
+    rows+='<div class="d-box"><div class="d-box-label">現價</div><div class="d-box-val">$'+d.p.toFixed(2)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">市值</div><div class="d-box-val">$'+val.toFixed(2)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">盈虧</div><div class="d-box-val '+pnlCls+'">'+(pnl>=0?'+':'')+' $'+pnl.toFixed(2)+' ('+(pct>=0?'+':'')+pct.toFixed(2)+'%)</div></div>';
+    if(d.hi52&&d.lo52){
+      const pos=((d.p-d.lo52)/(d.hi52-d.lo52)*100).toFixed(1);
+      rows+='<div class="d-box" style="grid-column:span 2"><div class="d-box-label">52週高 $'+d.hi52.toFixed(2)+' ─ 現價位置 ─ 52週低 $'+d.lo52.toFixed(2)+'</div>'
+        +'<div style="background:var(--surface);border-radius:999px;height:7px;margin-top:6px;position:relative;overflow:hidden">'
+        +'<div style="position:absolute;inset:0;background:linear-gradient(to right,var(--red),var(--gold),var(--green));opacity:.3;border-radius:999px"></div>'
+        +'<div style="position:absolute;left:'+pos+'%;transform:translateX(-50%);width:10px;height:10px;border-radius:50%;background:var(--primary);top:-1.5px;border:2px solid var(--surface)"></div>'
+        +'</div></div>';
+    }
   }
   document.getElementById('d-grid').innerHTML=rows;
-  const rLbl={buy:'建議加碼',hold:'建議持有',watch:'觀察為主'}[s.rec]||'持有';
-  document.getElementById('d-strat').innerHTML=`
-    <div class="strat-box"><div class="strat-label">操作建議</div><div class="strat-val">${rLbl}</div></div>
-    <div class="strat-box"><div class="strat-label">加碼觸發位</div><div class="strat-val">${s.trigger}</div></div>
-    <div class="strat-box"><div class="strat-label">止蝕參考</div><div class="strat-val">${s.stop}</div></div>
-    <div class="strat-box"><div class="strat-label">分析</div><div class="strat-val">${s.note}</div></div>`;
+  const rLbl2={buy:'建議加碼',hold:'建議持有',watch:'觀察為主'}[s.rec]||'持有';
+  document.getElementById('d-strat').innerHTML=
+    '<div class="strat-box"><div class="strat-label">操作建議</div><div class="strat-val">'+rLbl2+'</div></div>'
+    +'<div class="strat-box"><div class="strat-label">加碼觸發位</div><div class="strat-val">'+s.trigger+'</div></div>'
+    +'<div class="strat-box"><div class="strat-label">止蝕參考</div><div class="strat-val">'+s.stop+'</div></div>'
+    +'<div id="d-fund"><div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">📡 載入即時基本面中…</div></div>';
   document.getElementById('detail-modal').classList.add('show');
+
+  fetchFundamentals(h.ticker).then(f=>{
+    const el=document.getElementById('d-fund'); if(!el)return;
+    if(!f){el.innerHTML='<div style="padding:10px;color:var(--muted);font-size:11px;text-align:center">暫時無法載入基本面數據</div>';return;}
+    const price=f.regularMarketPrice||d?.p||0;
+    const upside=f.targetMeanPrice&&price?((f.targetMeanPrice/price-1)*100):null;
+    const uCol=upside!=null&&upside>=0?'var(--green)':'var(--red)';
+    const aC=recCol(f.recommendationKey);
+    el.innerHTML='<div style="margin-top:6px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 8px;border-top:1px solid var(--divider)">📊 即時基本面數據</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px">'
+      +'<div class="d-box"><div class="d-box-label">市值</div><div class="d-box-val">'+fmtMC(f.marketCap)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">市盈率(PE)</div><div class="d-box-val">'+fmtN(f.trailingPE)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">預期PE</div><div class="d-box-val">'+fmtN(f.forwardPE)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">市帳率(PB)</div><div class="d-box-val">'+fmtN(f.priceToBook)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">EPS(TTM)</div><div class="d-box-val">'+fmtP(f.epsTrailingTwelveMonths)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">預期EPS</div><div class="d-box-val">'+fmtP(f.epsForward)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">股息率</div><div class="d-box-val">'+fmtPct(f.trailingAnnualDividendYield||f.dividendYield)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">收入增長</div><div class="d-box-val">'+fmtPct(f.revenueGrowth)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">分析師目標價</div><div class="d-box-val">'+fmtP(f.targetMeanPrice)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">目標潛在回報</div><div class="d-box-val" style="color:'+uCol+'">'+(upside!=null?(upside>=0?'+':'')+upside.toFixed(1)+'%':'—')+'</div></div>'
+      +'</div>'
+      +'<div class="strat-box" style="display:flex;justify-content:space-between;align-items:center">'
+      +'<div><div class="strat-label">分析師評級</div><div class="strat-val" style="color:'+aC+';font-size:16px">'+recLbl(f.recommendationKey)+'</div></div>'
+      +'<div style="text-align:right"><div class="strat-label">覆蓋分析師</div><div class="strat-val">'+(f.numberOfAnalystOpinions||'—')+' 位</div></div>'
+      +'</div>';
+  });
 }
 function closeDetail(){document.getElementById('detail-modal').classList.remove('show');}
 
