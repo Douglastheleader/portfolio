@@ -298,7 +298,18 @@ input,textarea{-webkit-appearance:none;appearance:none}
 <body>
 
 <!-- TICKER TAPE -->
-<div class="tape-wrap"><div class="tape-track" id="tape"></div></div>
+<div class="tape-wrap"><div class="tape-track" id="tape"></div>
+<!-- Auto-refresh control bar -->
+<div id="ar-bar" style="display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--surface2);border-bottom:1px solid var(--border);flex-wrap:wrap;font-size:11px">
+  <span style="color:var(--muted);font-weight:600">⏱ 自動刷新</span>
+  <button class="ar-btn" data-mins="5"  onclick="startAutoRefresh(5)"  style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">5分</button>
+  <button class="ar-btn" data-mins="15" onclick="startAutoRefresh(15)" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--primary);color:#fff;font-size:11px;font-weight:700;cursor:pointer">15分</button>
+  <button class="ar-btn" data-mins="30" onclick="startAutoRefresh(30)" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">30分</button>
+  <button class="ar-btn" data-mins="60" onclick="startAutoRefresh(60)" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">60分</button>
+  <button id="ar-toggle" data-active="1" onclick="toggleAutoRefresh()" style="padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">⏸ 暫停</button>
+  <span style="color:var(--muted);margin-left:4px">下次刷新：<span id="refresh-countdown" style="color:var(--primary);font-weight:700;font-family:var(--mono)">--</span></span>
+  <span style="color:var(--muted);margin-left:6px">上次更新：<span id="last-refresh-time" style="color:var(--green);font-family:var(--mono)">--:--:--</span></span>
+</div></div>
 
 <!-- TOPBAR -->
 <header class="topbar">
@@ -1320,21 +1331,75 @@ function switchTab(id,btn){
 // ══════════════════════════════════════════
 //  REFRESH
 // ══════════════════════════════════════════
+async let autoRefreshTimer = null;
+let autoRefreshMins  = 15; // default 15 min
+let countdownTimer   = null;
+let nextRefreshAt    = null;
+
 async function doRefresh(){
   const ri=document.getElementById('ri');
   ri.classList.add('spin');
   renderPrices(true);
   await fetchAll();
   renderPrices(); renderSummary(); renderTape(); renderWatch();
-  // Always reload whichever news tab is active
   newsLoaded={holdings:false,sector:false};
   const activeTab=document.querySelector('.tab-btn.active');
   if(activeTab){
     const lbl=activeTab.textContent;
     if(lbl.includes('即時新聞')){loadHoldingNews();newsLoaded.holdings=true;}
-    if(lbl.includes('版塊')){sectorRegion='us';loadSectorNews();newsLoaded.sector=true;}
+    if(lbl.includes('版塊')){loadSectorByRegion();newsLoaded.sector=true;}
   }
   ri.classList.remove('spin');
+  // Update last-refreshed time
+  const now = new Date();
+  const hhmm = now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0')+':'+now.getSeconds().toString().padStart(2,'0');
+  const el = document.getElementById('last-refresh-time');
+  if(el) el.textContent = hhmm;
+  // Reset countdown
+  nextRefreshAt = Date.now() + autoRefreshMins * 60000;
+  updateCountdown();
+}
+
+function updateCountdown(){
+  const el = document.getElementById('refresh-countdown');
+  if(!el || !nextRefreshAt) return;
+  const diff = Math.max(0, nextRefreshAt - Date.now());
+  const m = Math.floor(diff/60000);
+  const s = Math.floor((diff%60000)/1000);
+  el.textContent = m+'m '+s.toString().padStart(2,'0')+'s';
+}
+
+function startAutoRefresh(mins){
+  autoRefreshMins = mins;
+  if(autoRefreshTimer) clearInterval(autoRefreshTimer);
+  if(countdownTimer)   clearInterval(countdownTimer);
+  nextRefreshAt = Date.now() + mins * 60000;
+  autoRefreshTimer = setInterval(doRefresh, mins * 60000);
+  countdownTimer   = setInterval(updateCountdown, 1000);
+  updateCountdown();
+  // Update button styles
+  document.querySelectorAll('.ar-btn').forEach(b=>{
+    b.style.background = parseInt(b.dataset.mins)===mins ? 'var(--primary)' : 'var(--surface2)';
+    b.style.color      = parseInt(b.dataset.mins)===mins ? '#fff'           : 'var(--muted)';
+  });
+  const tog = document.getElementById('ar-toggle');
+  if(tog){ tog.textContent='⏸ 暫停'; tog.dataset.active='1'; }
+}
+
+function stopAutoRefresh(){
+  if(autoRefreshTimer) clearInterval(autoRefreshTimer);
+  if(countdownTimer)   clearInterval(countdownTimer);
+  autoRefreshTimer = null; countdownTimer = null; nextRefreshAt = null;
+  const el = document.getElementById('refresh-countdown');
+  if(el) el.textContent = '已暫停';
+  const tog = document.getElementById('ar-toggle');
+  if(tog){ tog.textContent='▶ 恢復'; tog.dataset.active='0'; }
+}
+
+function toggleAutoRefresh(){
+  const tog = document.getElementById('ar-toggle');
+  if(tog && tog.dataset.active==='1') stopAutoRefresh();
+  else startAutoRefresh(autoRefreshMins);
 }
 
 // ══════════════════════════════════════════
@@ -1815,8 +1880,7 @@ loadTrades();
 renderPrices(true);
 renderWatch();
 doRefresh();
-setInterval(doRefresh, 60000);
-setInterval(()=>{newsLoaded={holdings:false,sector:false};}, 600000);
+startAutoRefresh(15); // default 15 min auto-refresh
 </script>
 </body>
 </html>
