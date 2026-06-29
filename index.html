@@ -299,17 +299,6 @@ input,textarea{-webkit-appearance:none;appearance:none}
 
 <!-- TICKER TAPE -->
 <div class="tape-wrap"><div class="tape-track" id="tape"></div></div>
-<!-- Auto-refresh control bar -->
-<div id="ar-bar" style="display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--surface2);border-bottom:1px solid var(--border);flex-wrap:wrap;font-size:11px">
-  <span style="color:var(--muted);font-weight:600">⏱ 自動刷新</span>
-  <button class="ar-btn" data-mins="5"  onclick="startAutoRefresh(5)"  style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">5分</button>
-  <button class="ar-btn" data-mins="15" onclick="startAutoRefresh(15)" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--primary);color:#fff;font-size:11px;font-weight:700;cursor:pointer">15分</button>
-  <button class="ar-btn" data-mins="30" onclick="startAutoRefresh(30)" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">30分</button>
-  <button class="ar-btn" data-mins="60" onclick="startAutoRefresh(60)" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">60分</button>
-  <button id="ar-toggle" data-active="1" onclick="toggleAutoRefresh()" style="padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">⏸ 暫停</button>
-  <span style="color:var(--muted);margin-left:4px">下次刷新：<span id="refresh-countdown" style="color:var(--primary);font-weight:700;font-family:var(--mono)">--</span></span>
-  <span style="color:var(--muted);margin-left:6px">上次更新：<span id="last-refresh-time" style="color:var(--green);font-family:var(--mono)">--:--:--</span></span>
-</div></div>
 
 <!-- TOPBAR -->
 <header class="topbar">
@@ -1331,10 +1320,8 @@ function switchTab(id,btn){
 // ══════════════════════════════════════════
 //  REFRESH
 // ══════════════════════════════════════════
-async let autoRefreshTimer = null;
-let autoRefreshMins  = 15; // default 15 min
-let countdownTimer   = null;
-let nextRefreshAt    = null;
+async // ── Auto-refresh state ──
+let _arTimer=null, _cdTimer=null, _arMins=15, _nextAt=null;
 
 async function doRefresh(){
   const ri=document.getElementById('ri');
@@ -1350,56 +1337,47 @@ async function doRefresh(){
     if(lbl.includes('版塊')){loadSectorByRegion();newsLoaded.sector=true;}
   }
   ri.classList.remove('spin');
-  // Update last-refreshed time
-  const now = new Date();
-  const hhmm = now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0')+':'+now.getSeconds().toString().padStart(2,'0');
-  const el = document.getElementById('last-refresh-time');
-  if(el) el.textContent = hhmm;
-  // Reset countdown
-  nextRefreshAt = Date.now() + autoRefreshMins * 60000;
-  updateCountdown();
+  const now=new Date();
+  const ts=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0')+':'+now.getSeconds().toString().padStart(2,'0');
+  const el=document.getElementById('ar-last'); if(el) el.textContent=ts;
+  _nextAt=Date.now()+_arMins*60000;
 }
 
-function updateCountdown(){
-  const el = document.getElementById('refresh-countdown');
-  if(!el || !nextRefreshAt) return;
-  const diff = Math.max(0, nextRefreshAt - Date.now());
-  const m = Math.floor(diff/60000);
-  const s = Math.floor((diff%60000)/1000);
-  el.textContent = m+'m '+s.toString().padStart(2,'0')+'s';
+function _updateCD(){
+  const el=document.getElementById('ar-cd'); if(!el||!_nextAt) return;
+  const d=Math.max(0,_nextAt-Date.now());
+  el.textContent=Math.floor(d/60000)+'m '+Math.floor((d%60000)/1000).toString().padStart(2,'0')+'s';
 }
 
-function startAutoRefresh(mins){
-  autoRefreshMins = mins;
-  if(autoRefreshTimer) clearInterval(autoRefreshTimer);
-  if(countdownTimer)   clearInterval(countdownTimer);
-  nextRefreshAt = Date.now() + mins * 60000;
-  autoRefreshTimer = setInterval(doRefresh, mins * 60000);
-  countdownTimer   = setInterval(updateCountdown, 1000);
-  updateCountdown();
-  // Update button styles
+function setAR(mins){
+  _arMins=mins;
+  if(_arTimer) clearInterval(_arTimer);
+  if(_cdTimer) clearInterval(_cdTimer);
+  _nextAt=Date.now()+mins*60000;
+  _arTimer=setInterval(doRefresh, mins*60000);
+  _cdTimer=setInterval(_updateCD, 1000);
+  _updateCD();
   document.querySelectorAll('.ar-btn').forEach(b=>{
-    b.style.background = parseInt(b.dataset.mins)===mins ? 'var(--primary)' : 'var(--surface2)';
-    b.style.color      = parseInt(b.dataset.mins)===mins ? '#fff'           : 'var(--muted)';
+    const on=parseInt(b.dataset.m)===mins;
+    b.style.background=on?'var(--primary)':'var(--surface2)';
+    b.style.color=on?'#fff':'var(--muted)';
+    b.style.fontWeight=on?'700':'400';
   });
-  const tog = document.getElementById('ar-toggle');
-  if(tog){ tog.textContent='⏸ 暫停'; tog.dataset.active='1'; }
+  const tog=document.getElementById('ar-tog');
+  if(tog){tog.textContent='⏸ 暫停';tog.dataset.on='1';}
 }
 
-function stopAutoRefresh(){
-  if(autoRefreshTimer) clearInterval(autoRefreshTimer);
-  if(countdownTimer)   clearInterval(countdownTimer);
-  autoRefreshTimer = null; countdownTimer = null; nextRefreshAt = null;
-  const el = document.getElementById('refresh-countdown');
-  if(el) el.textContent = '已暫停';
-  const tog = document.getElementById('ar-toggle');
-  if(tog){ tog.textContent='▶ 恢復'; tog.dataset.active='0'; }
+function pauseAR(){
+  if(_arTimer){clearInterval(_arTimer);_arTimer=null;}
+  if(_cdTimer){clearInterval(_cdTimer);_cdTimer=null;}
+  _nextAt=null;
+  const el=document.getElementById('ar-cd'); if(el) el.textContent='已暫停';
+  const tog=document.getElementById('ar-tog'); if(tog){tog.textContent='▶ 恢復';tog.dataset.on='0';}
 }
 
-function toggleAutoRefresh(){
-  const tog = document.getElementById('ar-toggle');
-  if(tog && tog.dataset.active==='1') stopAutoRefresh();
-  else startAutoRefresh(autoRefreshMins);
+function toggleAR(){
+  const tog=document.getElementById('ar-tog');
+  if(tog&&tog.dataset.on==='1') pauseAR(); else setAR(_arMins);
 }
 
 // ══════════════════════════════════════════
@@ -1880,7 +1858,19 @@ loadTrades();
 renderPrices(true);
 renderWatch();
 doRefresh();
-startAutoRefresh(15); // default 15 min auto-refresh
+setAR(15);
 </script>
+
+<!-- Auto-refresh bar -->
+<div id="ar-bar" style="position:fixed;bottom:0;left:0;right:0;z-index:999;display:flex;align-items:center;gap:6px;padding:5px 12px;background:var(--surface2);border-top:1px solid var(--border);flex-wrap:wrap;font-size:11px">
+  <span style="color:var(--muted);font-weight:600;white-space:nowrap">⏱ 自動刷新</span>
+  <button class="ar-btn" data-m="5"  onclick="setAR(5)"  style="padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">5分</button>
+  <button class="ar-btn" data-m="15" onclick="setAR(15)" style="padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--primary);color:#fff;font-size:11px;font-weight:700;cursor:pointer">15分</button>
+  <button class="ar-btn" data-m="30" onclick="setAR(30)" style="padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">30分</button>
+  <button class="ar-btn" data-m="60" onclick="setAR(60)" style="padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:11px;cursor:pointer">60分</button>
+  <button id="ar-tog" data-on="1" onclick="toggleAR()" style="padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">⏸ 暫停</button>
+  <span style="color:var(--muted);white-space:nowrap">下次：<b id="ar-cd" style="color:var(--primary);font-family:var(--mono)">--</b></span>
+  <span style="color:var(--muted);white-space:nowrap">上次：<b id="ar-last" style="color:var(--green);font-family:var(--mono)">--:--:--</b></span>
+</div>
 </body>
 </html>
