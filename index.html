@@ -544,13 +544,11 @@ setInterval(updateClock,1000); updateClock();
 // ══════════════════════════════════════════
 const PROXY = 'https://corsproxy.io/?';
 let fundCache = {};
+const FINNHUB_KEY = 'd911e61r01qsei6m7i50d911e61r01qsei6m7i5g';
+const FINNHUB = 'https://finnhub.io/api/v1';
 
 async function fetchPrice(t) {
-  // Try multiple proxies for resilience
-  const proxies = [
-    'https://corsproxy.io/?',
-    'https://api.allorigins.win/raw?url=',
-  ];
+  const proxies = ['https://corsproxy.io/?','https://api.allorigins.win/raw?url='];
   for (const px of proxies) {
     try {
       const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=1y';
@@ -563,305 +561,67 @@ async function fetchPrice(t) {
       const prev = m.previousClose || p;
       const hi52 = closes.length ? Math.max(...closes) : null;
       const lo52 = closes.length ? Math.min(...closes) : null;
-      // Extract any fundamentals available in chart meta
-      fundCache[t] = {
-        marketCap:      m.marketCap || null,
-        trailingPE:     m.trailingPE || null,
-        epsTrailingTwelveMonths: m.epsTrailingTwelveMonths || null,
-        dividendRate:   m.dividendRate || null,
-        dividendYield:  m.trailingAnnualDividendYield || null,
-        fiftyTwoWeekHigh: hi52,
-        fiftyTwoWeekLow:  lo52,
-      };
-      return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52, px };
+      return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52 };
     } catch { continue; }
   }
   return null;
 }
 
-async function fetchFundExtra(t, px) {
-  const usePx = px || PROXY;
-  // Try v10 quoteSummary, v11 quoteSummary, and v7 quote
-  const endpoints = [
-    'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
-    'https://query1.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
-    'https://query2.finance.yahoo.com/v11/finance/quoteSummary/'+t+'?modules=summaryDetail%2CdefaultKeyStatistics%2CfinancialData',
-    'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+t,
-  ];
-  for (const url of endpoints) {
-    try {
-      const r = await fetch(usePx + encodeURIComponent(url), {cache:'no-store'});
-      if (!r.ok) continue;
-      const j = await r.json();
-      console.log('[Fund] '+t+' endpoint:',url.split('/')[4],'keys:', Object.keys(j));
-
-      // v7 quote format
-      if (j.quoteResponse?.result?.[0]) {
-        const q = j.quoteResponse.result[0];
-        console.log('[Fund v7] fields:', Object.keys(q).join(','));
-        return {
-          marketCap:       q.marketCap,
-          trailingPE:      q.trailingPE,
-          forwardPE:       q.forwardPE,
-          priceToBook:     q.priceToBook,
-          targetMeanPrice: q.targetMeanPrice,
-          recommendationKey: q.recommendationKey,
-          numberOfAnalystOpinions: q.numberOfAnalystOpinions,
-          dividendYield:   q.trailingAnnualDividendYield || q.dividendYield,
-          trailingAnnualDividendYield: q.trailingAnnualDividendYield,
-          epsTrailingTwelveMonths: q.epsTrailingTwelveMonths,
-          epsForward:      q.epsForward,
-          revenueGrowth:   q.revenueGrowth,
-          currentPrice:    q.regularMarketPrice,
-        };
-      }
-
-      // v10/v11 quoteSummary format
-      if (j.quoteSummary?.result?.[0]) {
-        const q  = j.quoteSummary.result[0];
-        const sd = q.summaryDetail || {};
-        const ks = q.defaultKeyStatistics || {};
-        const fd = q.financialData || {};
-        console.log('[Fund v10] sd keys:', Object.keys(sd).slice(0,8).join(','));
-        console.log('[Fund v10] fd keys:', Object.keys(fd).slice(0,8).join(','));
-        const result = {
-          marketCap:       sd.marketCap?.raw       ?? sd.marketCap,
-          trailingPE:      sd.trailingPE?.raw      ?? sd.trailingPE,
-          forwardPE:       sd.forwardPE?.raw        ?? sd.forwardPE,
-          priceToBook:     ks.priceToBook?.raw      ?? ks.priceToBook,
-          targetMeanPrice: fd.targetMeanPrice?.raw  ?? fd.targetMeanPrice,
-          recommendationKey: fd.recommendationKey,
-          numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw ?? fd.numberOfAnalystOpinions,
-          dividendYield:   sd.dividendYield?.raw    ?? sd.dividendYield,
-          trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw ?? sd.trailingAnnualDividendYield,
-          epsTrailingTwelveMonths: ks.trailingEps?.raw ?? ks.trailingEps,
-          epsForward:      ks.forwardEps?.raw       ?? ks.forwardEps,
-          revenueGrowth:   fd.revenueGrowth?.raw    ?? fd.revenueGrowth,
-          currentPrice:    fd.currentPrice?.raw     ?? fd.currentPrice,
-        };
-        console.log('[Fund v10] result marketCap:', result.marketCap, 'PE:', result.trailingPE);
-        // Only return if we got at least some useful data
-        if (result.marketCap || result.trailingPE || result.currentPrice) return result;
-      }
-    } catch(e) { console.warn('[Fund] error:', e.message); continue; }
-  }
-  return null;
-}
-async function fetchAll() {
-  const tickers=[...new Set([...HOLDINGS.map(h=>h.ticker),...WATCH.map(w=>w.ticker)])];
-  const res = await Promise.all(tickers.map(t=>fetchPrice(t).then(r=>[t,r])));
-  res.forEach(([t,r])=>{ if(r) cache[t]=r; });
-}
-
-// ══════════════════════════════════════════
-//  RENDER PRICES
-// ══════════════════════════════════════════
-function renderPrices(loading=false) {
-  const c = document.getElementById('price-grid');
-  c.innerHTML = HOLDINGS.map((h,i) => {
-    const d = cache[h.ticker];
-    const cost = h.shares * h.cost;
-    const strat = STRATS[h.ticker] || {rec:'hold',trigger:'—',stop:'—',note:'—'};
-    const bCls = {buy:'badge-buy',hold:'badge-hold',watch:'badge-watch'}[strat.rec]||'badge-hold';
-    const bLbl = {buy:'加碼',hold:'持有',watch:'觀察'}[strat.rec]||'持有';
-    if (loading||!d) return `<div class="p-card" onclick="openDetail(${i})">
-      <div class="pc-top"><div><div class="pc-sym">${h.ticker}</div><div class="pc-name">${h.name}</div></div><span class="pc-badge ${bCls}">${bLbl}</span></div>
-      <div class="sk" style="width:80px;height:22px;margin-bottom:6px"></div>
-      <div class="sk" style="width:55px;height:12px;margin-bottom:10px"></div>
-      <div class="pc-stats">
-        <div class="pc-stat"><div class="pc-stat-label">成本</div><div class="pc-stat-val">$${cost.toFixed(0)}</div></div>
-        <div class="pc-stat"><div class="pc-stat-label">股數</div><div class="pc-stat-val">${h.shares}</div></div>
-      </div></div>`;
-    const val=h.shares*d.p, pnl=val-cost, pct=(pnl/cost)*100;
-    const chgCls=d.ch>=0?'up':'dn', pnlCls=pnl>=0?'up':'dn';
-    const barW=Math.min(Math.abs(pct)*5,100), barColor=pnl>=0?'var(--green)':'var(--red)';
-    return `<div class="p-card" onclick="openDetail(${i})">
-      <div class="pc-top"><div><div class="pc-sym">${h.ticker}</div><div class="pc-name">${h.name}</div></div><span class="pc-badge ${bCls}">${bLbl}</span></div>
-      <div class="pc-price">$${d.p.toFixed(2)}</div>
-      <div class="pc-chg ${chgCls}">${d.ch>=0?'▲':'▼'} ${Math.abs(d.ch).toFixed(2)} (${d.pct>=0?'+':''}${d.pct.toFixed(2)}%)</div>
-      <div class="pc-stats">
-        <div class="pc-stat"><div class="pc-stat-label">成本</div><div class="pc-stat-val">$${cost.toFixed(0)}</div></div>
-        <div class="pc-stat"><div class="pc-stat-label">市值</div><div class="pc-stat-val">$${val.toFixed(0)}</div></div>
-        <div class="pc-stat"><div class="pc-stat-label">盈虧</div><div class="pc-stat-val ${pnlCls}">${pnl>=0?'+':''}$${Math.abs(pnl).toFixed(0)}</div></div>
-        <div class="pc-stat"><div class="pc-stat-label">回報</div><div class="pc-stat-val ${pnlCls}">${pct>=0?'+':''}${pct.toFixed(1)}%</div></div>
-      </div>
-      ${d.hi52&&d.lo52?`<div style="margin-top:7px">
-        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:3px">
-          <span>52W 低 $${d.lo52.toFixed(2)}</span>
-          <span style="font-weight:700;color:var(--primary)">52W</span>
-          <span>52W 高 $${d.hi52.toFixed(2)}</span>
-        </div>
-        <div style="background:var(--surface2);border-radius:999px;height:5px;position:relative;overflow:hidden">
-          <div style="position:absolute;left:0;right:0;height:100%;background:linear-gradient(to right,var(--red),var(--gold),var(--green));opacity:.25;border-radius:999px"></div>
-          <div style="position:absolute;left:${((d.p-d.lo52)/(d.hi52-d.lo52)*100).toFixed(1)}%;transform:translateX(-50%);width:8px;height:8px;border-radius:50%;background:var(--primary);top:-1.5px;border:2px solid var(--surface)"></div>
-        </div>
-      </div>`:''}
-      <div class="pnl-bar" style="margin-top:5px"><div class="pnl-fill" style="width:${barW}%;background:${barColor}"></div></div>
-    </div>`;
-  }).join('');
-}
-
-// ══════════════════════════════════════════
-//  SUMMARY BAR
-// ══════════════════════════════════════════
-function renderSummary() {
-  let tc=0,tv=0,td=0,cnt=0;
-  HOLDINGS.forEach(h=>{
-    const d=cache[h.ticker]; tc+=h.shares*h.cost;
-    if(d){tv+=h.shares*d.p; td+=h.shares*d.ch; cnt++;}
-  });
-  const fmt=n=>n>=1000?(n/1000).toFixed(2)+'K':n.toFixed(0);
-  document.getElementById('s-cost').textContent='$'+fmt(tc);
-  if(cnt>0){
-    const pnl=tv-tc,pct=(pnl/tc)*100;
-    document.getElementById('s-val').textContent='$'+fmt(tv);
-    const pe=document.getElementById('s-pnl');
-    pe.textContent=(pnl>=0?'+$':'-$')+fmt(Math.abs(pnl));
-    pe.style.color=pnl>=0?'var(--green)':'var(--red)';
-    const pce=document.getElementById('s-pct');
-    pce.textContent=(pct>=0?'+':'')+pct.toFixed(2)+'%';
-    pce.style.color=pct>=0?'var(--green)':'var(--red)';
-    const de=document.getElementById('s-day');
-    de.textContent=(td>=0?'+$':'-$')+fmt(Math.abs(td));
-    de.style.color=td>=0?'var(--green)':'var(--red)';
-  }
-}
-
-// ══════════════════════════════════════════
-//  TAPE
-// ══════════════════════════════════════════
-function renderTape() {
-  const all=[...HOLDINGS,...WATCH.map(w=>({ticker:w.ticker,name:w.name,shares:0,cost:0}))];
-  const items=all.map(h=>{
-    const d=cache[h.ticker];
-    if(!d) return `<div class="tape-item"><span class="tape-sym">${h.ticker}</span><span class="tape-price fl">—</span></div>`;
-    const cls=d.ch>=0?'up':'dn';
-    return `<div class="tape-item"><span class="tape-sym">${h.ticker}</span><span class="tape-price">$${d.p.toFixed(2)}</span><span class="tape-chg ${cls}">${d.ch>=0?'▲':'▼'}${Math.abs(d.pct).toFixed(2)}%</span></div>`;
-  }).join('');
-  document.getElementById('tape').innerHTML=items+items;
-}
-
-// ══════════════════════════════════════════
-//  NEWS (RSS - Holdings)
-// ══════════════════════════════════════════
-function timeAgo(s){
-  const d=(Date.now()-new Date(s))/1000;
-  if(d<3600) return Math.floor(d/60)+'分鐘前';
-  if(d<86400) return Math.floor(d/3600)+'小時前';
-  return Math.floor(d/86400)+'天前';
-}
-function sentiment(t){
-  if(/surge|jump|beat|growth|record|strong|rise|gain|rally|up|high|buy|upgrade|profit|exceed|expand/i.test(t)) return 'pos';
-  if(/fall|drop|miss|decline|loss|cut|down|warn|risk|sell|downgrade|concern|weak|below|crash/i.test(t)) return 'neg';
-  return 'neu';
-}
-async function fetchRSS(query) {
-  const ts = Date.now();
-  // Try Google News RSS first, then Yahoo Finance RSS as fallback
-  const urls = [
-    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en&ts=${ts}`,
-    `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(query.split(' ')[0])}&region=US&lang=en-US`,
-  ];
-  for (const url of urls) {
-    try {
-      const r = await fetch(PROXY + encodeURIComponent(url), {cache:'no-store'});
-      if (!r.ok) continue;
-      const txt = await r.text();
-      const xml = new DOMParser().parseFromString(txt, 'text/xml');
-      const items = Array.from(xml.querySelectorAll('item')).slice(0, 3);
-      if (!items.length) continue;
-      return items.map(item => ({
-        title: item.querySelector('title')?.textContent?.replace(/\s*-\s*[^-]{0,40}$/, '').trim() || '',
-        time:  timeAgo(item.querySelector('pubDate')?.textContent || ''),
-        s:     sentiment(item.querySelector('title')?.textContent || ''),
-        link:  item.querySelector('link')?.textContent || '#',
-      })).filter(x => x.title.length > 5);
-    } catch { continue; }
-  }
-  return [];
-}
-
-async function loadHoldingNews() {
-  const c=document.getElementById('news-holdings');
-  c.innerHTML='<div class="news-loading">📡 載入持股新聞中…</div>';
-  const results=await Promise.all(HOLDINGS.map(h=>fetchRSS(h.ticker+' '+h.name).then(r=>({ticker:h.ticker,items:r}))));
-  let html='';
-  results.forEach(({ticker,items})=>{
-    if(!items.length) return;
-    items.forEach(n=>{
-      const dot=n.s==='pos'?'var(--green)':n.s==='neg'?'var(--red)':'var(--gold)';
-      html+=`<div class="news-card" onclick="window.open('${n.link}','_blank')">
-        <div class="nc-top"><span class="nc-tag">${ticker}</span><span class="nc-sent" style="background:${dot}"></span></div>
-        <div class="nc-title">${n.title}</div>
-        <div class="nc-meta">${n.time}</div>
-      </div>`;
-    });
-  });
-  c.innerHTML=html||'<div class="news-loading">暫時無法載入新聞</div>';
-}
-
-async function loadSectorNews() {
-  const c=document.getElementById('news-sector');
-  c.innerHTML='<div class="news-loading">📡 載入版塊新聞中…</div>';
-  let html='';
-  for(const sec of SECTORS){
-    const items=await fetchRSS(sec.query);
-    if(!items.length) continue;
-    const impCls={high:'impact-high',med:'impact-med',low:'impact-low'}[sec.impact]||'impact-low';
-    const impLbl={high:'高影響',med:'中影響',low:'低影響'}[sec.impact]||'';
-    const related=sec.tickers.filter(t=>HOLDINGS.some(h=>h.ticker===t)||WATCH.some(w=>w.ticker===t));
-    html+=`<div class="news-section-title">
-      ${sec.name}
-      <span style="display:flex;gap:4px;align-items:center">
-        ${related.map(t=>`<span class="nc-tag">${t}</span>`).join('')}
-        <span class="nc-impact ${impCls}">${impLbl}</span>
-      </span>
-    </div>`;
-    items.forEach(n=>{
-      const dot=n.s==='pos'?'var(--green)':n.s==='neg'?'var(--red)':'var(--gold)';
-      html+=`<div class="news-card" onclick="window.open('${n.link}','_blank')">
-        <div class="nc-top"><span class="nc-sector-tag">${sec.name}</span><span class="nc-sent" style="background:${dot}"></span></div>
-        <div class="nc-title">${n.title}</div>
-        <div class="nc-meta">${n.time}</div>
-      </div>`;
-    });
-  }
-  c.innerHTML=html||'<div class="news-loading">暫時無法載入版塊新聞</div>';
-}
-
-// ══════════════════════════════════════════
-//  WATCHLIST
-// ══════════════════════════════════════════
-function renderWatch() {
-  document.getElementById('watch-list').innerHTML=WATCH.map(w=>{
-    const d=cache[w.ticker];
-    const pHtml=d
-      ?`<div class="wc-price">$${d.p.toFixed(2)}</div><div class="wc-chg ${d.ch>=0?'up':'dn'}">${d.ch>=0?'▲':'▼'}${Math.abs(d.pct).toFixed(2)}%</div>`
-      :`<div class="wc-price sk" style="width:60px;height:14px"></div>`;
-    return `<div class="watch-card">
-      <div class="wc-top">
-        <div class="wc-left"><div class="wc-sym">${w.ticker}</div><div class="wc-name">${w.name}</div></div>
-        <div class="wc-right">${pHtml}</div>
-      </div>
-      <div class="wc-note">${WATCH_NOTES[w.ticker]||'—'}</div>
-    </div>`;
-  }).join('');
-}
-
-// ══════════════════════════════════════════
-//  DETAIL SHEET
-// ══════════════════════════════════════════
-// ── Live fundamentals fetch ──
 async function fetchFundamentals(ticker) {
-  // First try the detailed v10 endpoint using all available proxies
-  const proxies = ['https://corsproxy.io/?','https://api.allorigins.win/raw?url='];
-  for (const px of proxies) {
-    const f = await fetchFundExtra(ticker, px);
-    if (f) return f;
+  try {
+    // Fetch all 3 Finnhub endpoints in parallel — no proxy needed
+    const [metricRes, targetRes, recRes, profileRes] = await Promise.allSettled([
+      fetch(FINNHUB+'/stock/metric?symbol='+ticker+'&metric=all&token='+FINNHUB_KEY),
+      fetch(FINNHUB+'/stock/price-target?symbol='+ticker+'&token='+FINNHUB_KEY),
+      fetch(FINNHUB+'/stock/recommendation?symbol='+ticker+'&token='+FINNHUB_KEY),
+      fetch(FINNHUB+'/stock/profile2?symbol='+ticker+'&token='+FINNHUB_KEY),
+    ]);
+
+    const metric  = metricRes.status==='fulfilled'  ? await metricRes.value.json()  : {};
+    const target  = targetRes.status==='fulfilled'  ? await targetRes.value.json()  : {};
+    const rec     = recRes.status==='fulfilled'     ? await recRes.value.json()     : [];
+    const profile = profileRes.status==='fulfilled' ? await profileRes.value.json() : {};
+
+    const m = metric.metric || {};
+    const latestRec = Array.isArray(rec) && rec.length ? rec[0] : {};
+
+    // Map Finnhub fields to our display shape
+    return {
+      marketCap:       profile.marketCapitalization ? profile.marketCapitalization*1e6 : null,
+      trailingPE:      m.peBasicExclExtraTTM || m.peTTM || null,
+      forwardPE:       m.peForwardAnnual || m.peForward || null,
+      priceToBook:     m.pbAnnual || m.pb || null,
+      epsTrailingTwelveMonths: m.epsBasicExclExtraItemsTTM || m.epsTTM || null,
+      epsForward:      m.epsForwardAnnual || null,
+      dividendYield:   m.dividendYieldIndicatedAnnual ? m.dividendYieldIndicatedAnnual/100 : null,
+      revenueGrowth:   m.revenueGrowthQuarterlyYoy ? m.revenueGrowthQuarterlyYoy/100 : null,
+      targetMeanPrice: target.targetMean || null,
+      targetHigh:      target.targetHigh || null,
+      targetLow:       target.targetLow || null,
+      numberOfAnalystOpinions: target.lastUpdated ? (latestRec.buy||0)+(latestRec.hold||0)+(latestRec.sell||0)+(latestRec.strongBuy||0)+(latestRec.strongSell||0) : null,
+      recommendationKey: resolveRec(latestRec),
+      hi52:            m['52WeekHigh'] || null,
+      lo52:            m['52WeekLow']  || null,
+      currentPrice:    null,
+      _recRaw:         latestRec,
+    };
+  } catch(e) {
+    console.warn('[Finnhub] error:', e.message);
+    return null;
   }
-  // Fall back to whatever was cached in fundCache during price fetch
-  return fundCache[ticker] || null;
 }
+
+function resolveRec(r) {
+  if (!r || (!r.buy && !r.hold && !r.sell && !r.strongBuy && !r.strongSell)) return null;
+  const sb=r.strongBuy||0, b=r.buy||0, h=r.hold||0, s=r.sell||0, ss=r.strongSell||0;
+  const score=(sb*5+b*4+h*3+s*2+ss*1)/(sb+b+h+s+ss||1);
+  if(score>=4.5) return 'strongBuy';
+  if(score>=3.75) return 'buy';
+  if(score>=2.75) return 'hold';
+  if(score>=2.0) return 'sell';
+  return 'strongSell';
+}
+
 
 function fmtMC(v){if(!v)return'—';if(v>=1e12)return'$'+(v/1e12).toFixed(2)+'T';if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B';return'$'+(v/1e6).toFixed(0)+'M';}
 function fmtP(v,d=2){return v!=null?'$'+v.toFixed(d):'—';}
@@ -920,13 +680,24 @@ function openDetail(i) {
       +'<div class="d-box"><div class="d-box-label">預期EPS</div><div class="d-box-val">'+fmtP(f.epsForward)+'</div></div>'
       +'<div class="d-box"><div class="d-box-label">股息率</div><div class="d-box-val">'+fmtPct(f.trailingAnnualDividendYield||f.dividendYield)+'</div></div>'
       +'<div class="d-box"><div class="d-box-label">收入增長</div><div class="d-box-val">'+fmtPct(f.revenueGrowth)+'</div></div>'
-      +'<div class="d-box"><div class="d-box-label">分析師目標價</div><div class="d-box-val">'+fmtP(f.targetMeanPrice)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">目標價(平均)</div><div class="d-box-val">'+fmtP(f.targetMeanPrice)+'</div></div>'
       +'<div class="d-box"><div class="d-box-label">目標潛在回報</div><div class="d-box-val" style="color:'+uCol+'">'+(upside!=null?(upside>=0?'+':'')+upside.toFixed(1)+'%':'—')+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">目標價(高)</div><div class="d-box-val" style="color:var(--green)">'+fmtP(f.targetHigh)+'</div></div>'
+      +'<div class="d-box"><div class="d-box-label">目標價(低)</div><div class="d-box-val" style="color:var(--red)">'+fmtP(f.targetLow)+'</div></div>'
       +'</div>'
-      +'<div class="strat-box" style="display:flex;justify-content:space-between;align-items:center">'
+      +'<div class="strat-box" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
       +'<div><div class="strat-label">分析師評級</div><div class="strat-val" style="color:'+aC+';font-size:16px">'+recLbl(f.recommendationKey)+'</div></div>'
       +'<div style="text-align:right"><div class="strat-label">覆蓋分析師</div><div class="strat-val">'+(f.numberOfAnalystOpinions||'—')+' 位</div></div>'
-      +'</div>';
+      +'</div>'
+      +(f._recRaw&&f._recRaw.strongBuy!=null?
+        '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:6px;text-align:center">'
+        +'<div style="background:var(--green-bg);border-radius:6px;padding:4px 2px"><div style="font-size:9px;color:var(--green)">強買</div><div style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--green)">'+(f._recRaw.strongBuy||0)+'</div></div>'
+        +'<div style="background:var(--surface2);border-radius:6px;padding:4px 2px"><div style="font-size:9px;color:var(--muted)">買入</div><div style="font-family:var(--mono);font-size:12px;font-weight:700">'+(f._recRaw.buy||0)+'</div></div>'
+        +'<div style="background:var(--surface2);border-radius:6px;padding:4px 2px"><div style="font-size:9px;color:var(--muted)">持有</div><div style="font-family:var(--mono);font-size:12px;font-weight:700">'+(f._recRaw.hold||0)+'</div></div>'
+        +'<div style="background:var(--surface2);border-radius:6px;padding:4px 2px"><div style="font-size:9px;color:var(--muted)">賣出</div><div style="font-family:var(--mono);font-size:12px;font-weight:700">'+(f._recRaw.sell||0)+'</div></div>'
+        +'<div style="background:var(--red-bg);border-radius:6px;padding:4px 2px"><div style="font-size:9px;color:var(--red)">強賣</div><div style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--red)">'+(f._recRaw.strongSell||0)+'</div></div>'
+        +'</div>'
+      :'');
   });
 }
 function closeDetail(){document.getElementById('detail-modal').classList.remove('show');}
