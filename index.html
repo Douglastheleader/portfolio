@@ -200,6 +200,38 @@ input,textarea{-webkit-appearance:none;appearance:none}
 /* TOAST */
 .toast{position:fixed;top:14px;left:50%;transform:translateX(-50%) translateY(-6px);background:var(--text);color:var(--surface);font-size:12px;font-weight:700;padding:9px 18px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:600;white-space:nowrap}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── CHARTS ── */
+.chart-section{margin-bottom:18px}
+.chart-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:8px 4px 10px;display:flex;align-items:center;gap:6px}
+.chart-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.donut-wrap{position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.donut-center{position:absolute;text-align:center;pointer-events:none}
+.donut-center-val{font-family:var(--mono);font-size:16px;font-weight:700}
+.donut-center-lbl{font-size:10px;color:var(--muted);margin-top:1px}
+.legend-list{display:flex;flex-direction:column;gap:6px}
+.legend-item{display:flex;align-items:center;gap:8px}
+.legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.legend-sym{font-family:var(--mono);font-size:11px;font-weight:700;min-width:38px}
+.legend-bar-wrap{flex:1;background:var(--surface2);border-radius:999px;height:6px;overflow:hidden}
+.legend-bar{height:100%;border-radius:999px;transition:width .6s ease}
+.legend-pct{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:36px;text-align:right}
+.legend-val{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:52px;text-align:right}
+.bar-chart-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.bar-sym{font-family:var(--mono);font-size:11px;font-weight:700;min-width:40px}
+.bar-wrap{flex:1;background:var(--surface2);border-radius:999px;height:20px;overflow:hidden;position:relative}
+.bar-fill{height:100%;border-radius:999px;transition:width .6s ease;position:relative}
+.bar-label{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;white-space:nowrap}
+.bar-label-out{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:60px;text-align:right}
+.pnl-chart-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.pnl-sym{font-family:var(--mono);font-size:11px;font-weight:700;min-width:40px}
+.pnl-bar-outer{flex:1;position:relative;height:22px;display:flex;align-items:center}
+.pnl-zero{position:absolute;top:0;bottom:0;width:2px;background:var(--border);z-index:1}
+.pnl-bar-inner{position:absolute;height:16px;border-radius:0 6px 6px 0;transition:width .6s ease}
+.pnl-bar-neg{border-radius:6px 0 0 6px}
+.pnl-val{font-family:var(--mono);font-size:10px;min-width:64px;text-align:right;font-weight:600}
+.chart-empty{padding:24px;text-align:center;color:var(--muted);font-size:12px}
+
 </style>
 </head>
 <body>
@@ -244,6 +276,7 @@ input,textarea{-webkit-appearance:none;appearance:none}
   <button class="tab-btn" onclick="switchTab('news',this)">📰 即時新聞</button>
   <button class="tab-btn" onclick="switchTab('sector',this)">🌐 版塊新聞</button>
   <button class="tab-btn" onclick="switchTab('watch',this)">👀 留意名單</button>
+  <button class="tab-btn" onclick="switchTab('charts',this)">📈 圖表</button>
 </div>
 
 <!-- PAGES -->
@@ -261,6 +294,10 @@ input,textarea{-webkit-appearance:none;appearance:none}
 
 <div class="page" id="pg-watch">
   <div id="watch-list"></div>
+</div>
+
+<div class="page" id="pg-charts">
+  <div id="charts-container"></div>
 </div>
 
 <!-- SETTINGS FAB -->
@@ -784,6 +821,7 @@ function switchTab(id,btn){
   document.getElementById('pg-'+id).classList.add('active');
   if(id==='news'&&!newsLoaded.holdings){ loadHoldingNews(); newsLoaded.holdings=true; }
   if(id==='sector'&&!newsLoaded.sector){ loadSectorNews(); newsLoaded.sector=true; }
+  if(id==='charts'){ renderCharts(); }
 }
 
 // ══════════════════════════════════════════
@@ -854,6 +892,172 @@ document.getElementById('inst-btn').addEventListener('click',async()=>{
 document.getElementById('inst-dismiss').addEventListener('click',()=>{
   document.getElementById('inst-banner').classList.remove('show');
 });
+
+
+// ══════════════════════════════════════════
+//  CHARTS
+// ══════════════════════════════════════════
+const CHART_COLORS = [
+  '#4f98a3','#5fa33a','#d4a835','#de6b73','#5893cc',
+  '#a06fc0','#e8834a','#41b89c','#e85d9a','#8fb04d'
+];
+
+function renderCharts() {
+  const c = document.getElementById('charts-container');
+  const loaded = HOLDINGS.filter(h => cache[h.ticker]);
+  if (!loaded.length) {
+    c.innerHTML = '<div class="chart-empty">⏳ 請等待股價載入後再查看圖表</div>';
+    return;
+  }
+
+  // ── Data prep ──
+  const items = loaded.map((h,i) => {
+    const d = cache[h.ticker];
+    const cost = h.shares * h.cost;
+    const val  = h.shares * d.p;
+    const pnl  = val - cost;
+    const pct  = (pnl / cost) * 100;
+    return { ticker:h.ticker, name:h.name, cost, val, pnl, pct, color:CHART_COLORS[i%CHART_COLORS.length] };
+  });
+
+  const totalVal  = items.reduce((s,x)=>s+x.val, 0);
+  const totalCost = items.reduce((s,x)=>s+x.cost, 0);
+  const totalPnl  = totalVal - totalCost;
+  const totalPct  = (totalPnl/totalCost)*100;
+
+  // ── 1. Donut – Allocation ──
+  const maxDonutVal = Math.max(...items.map(x=>x.val));
+  const donutHtml = `
+  <div class="chart-section">
+    <div class="chart-title">🥧 持倉配置比例</div>
+    <div class="chart-wrap">
+      <div class="donut-wrap">
+        <svg width="160" height="160" viewBox="0 0 160 160">
+          ${(()=>{
+            let angle = -Math.PI/2;
+            return items.map(item=>{
+              const pct = item.val/totalVal;
+              const sweep = pct*2*Math.PI;
+              const r=62,cx=80,cy=80,inner=36;
+              const x1=cx+r*Math.cos(angle), y1=cy+r*Math.sin(angle);
+              const x2=cx+r*Math.cos(angle+sweep), y2=cy+r*Math.sin(angle+sweep);
+              const xi1=cx+inner*Math.cos(angle+sweep), yi1=cy+inner*Math.sin(angle+sweep);
+              const xi2=cx+inner*Math.cos(angle), yi2=cy+inner*Math.sin(angle);
+              const lg=sweep>Math.PI?1:0;
+              const path=`M${x1},${y1} A${r},${r} 0 ${lg},1 ${x2},${y2} L${xi1},${yi1} A${inner},${inner} 0 ${lg},0 ${xi2},${yi2} Z`;
+              angle+=sweep;
+              return `<path d="${path}" fill="${item.color}" opacity=".9"/>`;
+            }).join('');
+          })()}
+        </svg>
+        <div class="donut-center">
+          <div class="donut-center-val" style="color:${totalPnl>=0?'var(--green)':'var(--red)'}">${totalPnl>=0?'+':''}$${Math.abs(totalPnl)<1000?Math.abs(totalPnl).toFixed(0):(Math.abs(totalPnl)/1000).toFixed(2)+'K'}</div>
+          <div class="donut-center-lbl">總盈虧</div>
+        </div>
+      </div>
+      <div class="legend-list">
+        ${items.map(item=>`
+          <div class="legend-item">
+            <div class="legend-dot" style="background:${item.color}"></div>
+            <div class="legend-sym">${item.ticker}</div>
+            <div class="legend-bar-wrap"><div class="legend-bar" style="width:${(item.val/totalVal*100).toFixed(1)}%;background:${item.color}"></div></div>
+            <div class="legend-pct">${(item.val/totalVal*100).toFixed(1)}%</div>
+            <div class="legend-val">$${item.val<1000?item.val.toFixed(0):(item.val/1000).toFixed(2)+'K'}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+
+  // ── 2. Bar – Market Value ──
+  const sortedVal = [...items].sort((a,b)=>b.val-a.val);
+  const barHtml = `
+  <div class="chart-section">
+    <div class="chart-title">📊 各股市值排行</div>
+    <div class="chart-wrap">
+      ${sortedVal.map(item=>{
+        const w = (item.val/sortedVal[0].val*100).toFixed(1);
+        const valStr = item.val<1000?'$'+item.val.toFixed(0):'$'+(item.val/1000).toFixed(2)+'K';
+        return `<div class="bar-chart-row">
+          <div class="bar-sym">${item.ticker}</div>
+          <div class="bar-wrap">
+            <div class="bar-fill" style="width:${w}%;background:${item.color}">
+              <span class="bar-label">${valStr}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+
+  // ── 3. PnL Bar – diverging ──
+  const sortedPnl = [...items].sort((a,b)=>b.pct-a.pct);
+  const maxAbsPct = Math.max(...sortedPnl.map(x=>Math.abs(x.pct)));
+  const pnlHtml = `
+  <div class="chart-section">
+    <div class="chart-title">💹 各股盈虧百分比</div>
+    <div class="chart-wrap">
+      ${sortedPnl.map(item=>{
+        const barW = (Math.abs(item.pct)/maxAbsPct*45).toFixed(1);
+        const isPos = item.pct >= 0;
+        const col = isPos ? 'var(--green)' : 'var(--red)';
+        const pctStr = (item.pct>=0?'+':'')+item.pct.toFixed(2)+'%';
+        const pnlStr = (item.pnl>=0?'+$':'-$')+Math.abs(item.pnl).toFixed(0);
+        return `<div class="pnl-chart-row">
+          <div class="pnl-sym">${item.ticker}</div>
+          <div class="pnl-bar-outer">
+            <div class="pnl-zero" style="left:50%"></div>
+            ${isPos
+              ? `<div class="pnl-bar-inner" style="left:50%;width:${barW}%;background:${col}"></div>`
+              : `<div class="pnl-bar-inner pnl-bar-neg" style="right:50%;width:${barW}%;background:${col}"></div>`}
+          </div>
+          <div class="pnl-val" style="color:${col}">${pctStr}</div>
+          <div class="pnl-val" style="color:${col};min-width:58px">${pnlStr}</div>
+        </div>`;
+      }).join('')}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--divider);display:flex;justify-content:space-between;font-size:11px">
+        <span style="color:var(--muted)">總成本 $${(totalCost/1000).toFixed(2)}K</span>
+        <span style="color:${totalPnl>=0?'var(--green)':'var(--red)'}">總回報 ${totalPct>=0?'+':''}${totalPct.toFixed(2)}%</span>
+        <span style="color:${totalPnl>=0?'var(--green)':'var(--red)'}">盈虧 ${totalPnl>=0?'+$':'-$'}${Math.abs(totalPnl).toFixed(0)}</span>
+      </div>
+    </div>
+  </div>`;
+
+  // ── 4. Cost vs Value comparison ──
+  const cvHtml = `
+  <div class="chart-section">
+    <div class="chart-title">⚖️ 成本 vs 現值對比</div>
+    <div class="chart-wrap">
+      ${items.map(item=>{
+        const maxV = Math.max(item.cost, item.val);
+        const costW = (item.cost/maxV*100).toFixed(1);
+        const valW  = (item.val/maxV*100).toFixed(1);
+        const isPos = item.val >= item.cost;
+        return `<div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-family:var(--mono);font-size:11px;font-weight:700">${item.ticker}</span>
+            <span style="font-size:10px;color:var(--muted)">${item.name}</span>
+          </div>
+          <div style="display:flex;gap:4px;margin-bottom:2px;align-items:center">
+            <span style="font-size:9px;color:var(--muted);min-width:28px">成本</span>
+            <div style="flex:1;background:var(--surface2);border-radius:999px;height:8px;overflow:hidden">
+              <div style="width:${costW}%;height:100%;background:var(--faint);border-radius:999px"></div>
+            </div>
+            <span style="font-family:var(--mono);font-size:10px;color:var(--muted);min-width:52px;text-align:right">$${item.cost.toFixed(0)}</span>
+          </div>
+          <div style="display:flex;gap:4px;align-items:center">
+            <span style="font-size:9px;color:var(--muted);min-width:28px">現值</span>
+            <div style="flex:1;background:var(--surface2);border-radius:999px;height:8px;overflow:hidden">
+              <div style="width:${valW}%;height:100%;background:${isPos?'var(--green)':'var(--red)'};border-radius:999px"></div>
+            </div>
+            <span style="font-family:var(--mono);font-size:10px;color:${isPos?'var(--green)':'var(--red)'};min-width:52px;text-align:right">$${item.val.toFixed(0)}</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+
+  c.innerHTML = donutHtml + barHtml + pnlHtml + cvHtml;
+}
 
 // ══════════════════════════════════════════
 //  INIT
