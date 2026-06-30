@@ -629,157 +629,77 @@ const RSS_TTL  = 5 * 60 * 1000;
 let fundCache = {};
 
 async function fetchPrice(t) {
-  // ── Method A: Yahoo Finance v8 via multiple proxies ──
-  const yUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=1y';
-  const yUrl2= 'https://query2.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=1y';
-  const proxies = [
-    'https://api.allorigins.win/raw?url=',
-    'https://corsproxy.io/?',
-    'https://api.codetabs.com/v1/proxy?quest=',
-    'https://thingproxy.freeboard.io/fetch/',
+  const ETF_LIST = ['VOO','VT','QQQ','SPY','IWM','EFA','GLD'];
+  const isETF = ETF_LIST.includes(t.toUpperCase());
+
+  // ── Method 1: stockprices.dev (no proxy, no key, native CORS support) ──
+  try {
+    const url = isETF
+      ? 'https://stockprices.dev/api/etfs/'  + t.toUpperCase()
+      : 'https://stockprices.dev/api/stocks/'+ t.toUpperCase();
+    const r = await fetch(url, {signal:AbortSignal.timeout(8000), cache:'no-store'});
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.Price > 0) {
+        return {p:j.Price, ch:j.ChangeAmount||0, pct:j.ChangePercentage||0, hi52:null, lo52:null};
+      }
+    }
+  } catch(e) {}
+
+  // ── Method 2: Yahoo Finance v8 via proxies ──
+  const bases = [
+    'https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=5d',
+    'https://query2.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=5d',
   ];
-  for (const base of [yUrl, yUrl2]) {
-    for (const px of proxies) {
+  const pxList = [
+    u => 'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+    u => 'https://corsproxy.io/?'+encodeURIComponent(u),
+    u => 'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
+  ];
+  for (const base of bases) {
+    for (const px of pxList) {
       try {
-        const r = await fetch(px+encodeURIComponent(base), {signal:AbortSignal.timeout(6000), cache:'no-store'});
+        const r = await fetch(px(base), {signal:AbortSignal.timeout(6000), cache:'no-store'});
         if (!r.ok) continue;
         const j = await r.json();
-        const res = j?.chart?.result?.[0];
-        if (!res) continue;
+        const res = j?.chart?.result?.[0]; if (!res) continue;
         const m = res.meta;
-        const closes = res.indicators?.quote?.[0]?.close?.filter(x=>x!=null) || [];
-        const p    = m.regularMarketPrice || m.previousClose;
-        const prev = m.previousClose || p;
-        if (!p) continue;
-        const hi52 = closes.length ? Math.max(...closes) : null;
-        const lo52 = closes.length ? Math.min(...closes) : null;
-        fundCache[t] = {
-          marketCap: m.marketCap||null, trailingPE: m.trailingPE||null,
-          epsTrailingTwelveMonths: m.epsTrailingTwelveMonths||null,
-          dividendRate: m.dividendRate||null,
-          dividendYield: m.trailingAnnualDividendYield||null,
-          fiftyTwoWeekHigh: hi52, fiftyTwoWeekLow: lo52,
-        };
-        return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52 };
-      } catch { continue; }
+        const p = m.regularMarketPrice || m.previousClose; if (!p || p<=0) continue;
+        const prev = m.chartPreviousClose || m.previousClose || p;
+        const closes = res.indicators?.quote?.[0]?.close?.filter(x=>x!=null)||[];
+        const hi52 = m.fiftyTwoWeekHigh||(closes.length?Math.max(...closes):null);
+        const lo52 = m.fiftyTwoWeekLow ||(closes.length?Math.min(...closes):null);
+        fundCache[t]={marketCap:m.marketCap||null,trailingPE:m.trailingPE||null,
+          epsTrailingTwelveMonths:m.epsTrailingTwelveMonths||null,
+          dividendRate:m.dividendRate||null,dividendYield:m.trailingAnnualDividendYield||null,
+          fiftyTwoWeekHigh:hi52,fiftyTwoWeekLow:lo52};
+        return {p, ch:p-prev, pct:((p-prev)/prev)*100, hi52, lo52};
+      } catch(e) { continue; }
     }
   }
 
-  // ── Method B: Stooq CSV (no CORS, highly reliable) ──
+  // ── Method 3: Stooq CSV ──
   try {
-    const sym = t.toLowerCase();
-    const stooqUrl = 'https://stooq.com/q/l/?s='+sym+'.us&f=sd2t2ohlcv&h&e=csv';
-    const r = await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(stooqUrl), {signal:AbortSignal.timeout(6000)});
+    const su = 'https://stooq.com/q/l/?s='+t.toLowerCase()+'.us&f=sd2t2ohlcv&h&e=csv';
+    const r = await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(su),{signal:AbortSignal.timeout(6000)});
     if (r.ok) {
-      const txt = await r.text();
-      const lines = txt.trim().split('\n');
-      if (lines.length >= 2) {
-        const cols = lines[1].split(',');
-        const p = parseFloat(cols[6]); // close
-        const o = parseFloat(cols[4]); // open
-        if (p && !isNaN(p)) {
-          const ch = p - o;
-          return { p, ch, pct:(ch/o)*100, hi52:null, lo52:null };
-        }
+      const lines = (await r.text()).trim().split('\n');
+      if (lines.length>=2){
+        const c=lines[1].split(',');
+        const p=parseFloat(c[6]),o=parseFloat(c[4]);
+        if(p>0&&!isNaN(p)) return {p,ch:p-o,pct:((p-o)/o)*100,hi52:null,lo52:null};
       }
     }
-  } catch { }
-
-  // ── Method C: Yahoo Finance v7 quote via proxy ──
-  try {
-    const v7 = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+t;
-    const r = await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(v7), {signal:AbortSignal.timeout(6000)});
-    if (r.ok) {
-      const j = await r.json();
-      const q = j?.quoteResponse?.result?.[0];
-      if (q && q.regularMarketPrice) {
-        const p = q.regularMarketPrice;
-        const prev = q.regularMarketPreviousClose || p;
-        return { p, ch:p-prev, pct:((p-prev)/prev)*100, hi52:q.fiftyTwoWeekHigh||null, lo52:q.fiftyTwoWeekLow||null };
-      }
-    }
-  } catch { }
+  } catch(e) {}
 
   return null;
 }
 
-async function fetchFundExtra(t, px) {
-  const usePx = px || PROXY;
-  // Try v10 quoteSummary, v11 quoteSummary, and v7 quote
-  const endpoints = [
-    'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
-    'https://query1.finance.yahoo.com/v10/finance/quoteSummary/'+t+'?modules=summaryDetail,defaultKeyStatistics,financialData',
-    'https://query2.finance.yahoo.com/v11/finance/quoteSummary/'+t+'?modules=summaryDetail%2CdefaultKeyStatistics%2CfinancialData',
-    'https://query1.finance.yahoo.com/v7/finance/quote?symbols='+t,
-  ];
-  for (const url of endpoints) {
-    try {
-      const r = await fetch(usePx + encodeURIComponent(url), {cache:'no-store'});
-      if (!r.ok) continue;
-      const j = await r.json();
-      console.log('[Fund] '+t+' endpoint:',url.split('/')[4],'keys:', Object.keys(j));
-
-      // v7 quote format
-      if (j.quoteResponse?.result?.[0]) {
-        const q = j.quoteResponse.result[0];
-        console.log('[Fund v7] fields:', Object.keys(q).join(','));
-        return {
-          marketCap:       q.marketCap,
-          trailingPE:      q.trailingPE,
-          forwardPE:       q.forwardPE,
-          priceToBook:     q.priceToBook,
-          targetMeanPrice: q.targetMeanPrice,
-          recommendationKey: q.recommendationKey,
-          numberOfAnalystOpinions: q.numberOfAnalystOpinions,
-          dividendYield:   q.trailingAnnualDividendYield || q.dividendYield,
-          trailingAnnualDividendYield: q.trailingAnnualDividendYield,
-          epsTrailingTwelveMonths: q.epsTrailingTwelveMonths,
-          epsForward:      q.epsForward,
-          revenueGrowth:   q.revenueGrowth,
-          currentPrice:    q.regularMarketPrice,
-        };
-      }
-
-      // v10/v11 quoteSummary format
-      if (j.quoteSummary?.result?.[0]) {
-        const q  = j.quoteSummary.result[0];
-        const sd = q.summaryDetail || {};
-        const ks = q.defaultKeyStatistics || {};
-        const fd = q.financialData || {};
-        console.log('[Fund v10] sd keys:', Object.keys(sd).slice(0,8).join(','));
-        console.log('[Fund v10] fd keys:', Object.keys(fd).slice(0,8).join(','));
-        const result = {
-          marketCap:       sd.marketCap?.raw       ?? sd.marketCap,
-          trailingPE:      sd.trailingPE?.raw      ?? sd.trailingPE,
-          forwardPE:       sd.forwardPE?.raw        ?? sd.forwardPE,
-          priceToBook:     ks.priceToBook?.raw      ?? ks.priceToBook,
-          targetMeanPrice: fd.targetMeanPrice?.raw  ?? fd.targetMeanPrice,
-          recommendationKey: fd.recommendationKey,
-          numberOfAnalystOpinions: fd.numberOfAnalystOpinions?.raw ?? fd.numberOfAnalystOpinions,
-          dividendYield:   sd.dividendYield?.raw    ?? sd.dividendYield,
-          trailingAnnualDividendYield: sd.trailingAnnualDividendYield?.raw ?? sd.trailingAnnualDividendYield,
-          epsTrailingTwelveMonths: ks.trailingEps?.raw ?? ks.trailingEps,
-          epsForward:      ks.forwardEps?.raw       ?? ks.forwardEps,
-          revenueGrowth:   fd.revenueGrowth?.raw    ?? fd.revenueGrowth,
-          currentPrice:    fd.currentPrice?.raw     ?? fd.currentPrice,
-        };
-        console.log('[Fund v10] result marketCap:', result.marketCap, 'PE:', result.trailingPE);
-        // Only return if we got at least some useful data
-        if (result.marketCap || result.trailingPE || result.currentPrice) return result;
-      }
-    } catch(e) { console.warn('[Fund] error:', e.message); continue; }
-  }
-  return null;
-}
 async function fetchAll() {
   const tickers=[...new Set([...HOLDINGS.map(h=>h.ticker),...WATCH.map(w=>w.ticker)])];
+  const res = await Promise.all(tickers.map(t=>fetchPrice(t).then(r=>[t,r])));
   const now=Date.now();
-  // Stagger requests 500ms apart to avoid proxy rate limiting
-  for (const t of tickers) {
-    await new Promise(res=>setTimeout(res, 500));
-    const r = await fetchPrice(t);
-    if (r) { r._ts=now; cache[t]=r; renderPrices(); renderSummary(); renderTape(); }
-  }
+  res.forEach(([t,r])=>{ if(r){ r._ts=now; cache[t]=r; } });
 }
 
 // ══════════════════════════════════════════
